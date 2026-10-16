@@ -18,6 +18,8 @@ use ReflectionProperty;
  *
  * Cake only loads a plugin's locale folder for a domain named after the plugin, so the plugin registers this
  * loader for its own domain.
+ *
+ * @internal
  */
 final class PluginMessagesLoader
 {

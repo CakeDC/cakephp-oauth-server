@@ -11,6 +11,8 @@ use CakeDC\OAuthServer\Config\PluginConfig;
 
 /**
  * Wires the plugin into cakedc/users: authenticator and RBAC rules.
+ *
+ * @internal
  */
 final class UsersIntegration
 {

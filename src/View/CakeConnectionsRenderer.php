@@ -9,6 +9,8 @@ use CakeDC\OAuth\Server\View\ConnectionsView;
 
 /**
  * The connections page as a Cake template (`templates/OAuth/connections.php`).
+ *
+ * @internal
  */
 final class CakeConnectionsRenderer implements ConnectionsRendererInterface
 {

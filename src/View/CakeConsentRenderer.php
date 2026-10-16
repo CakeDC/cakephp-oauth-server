@@ -9,6 +9,8 @@ use CakeDC\OAuth\Server\View\ConsentView;
 
 /**
  * The consent page as a Cake template (`templates/OAuth/consent.php`).
+ *
+ * @internal
  */
 final class CakeConsentRenderer implements ConsentRendererInterface
 {

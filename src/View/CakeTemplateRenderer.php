@@ -9,6 +9,8 @@ use Cake\View\ViewBuilder;
 
 /**
  * Renders the plugin's templates to strings for the core's page renderers.
+ *
+ * @internal
  */
 final class CakeTemplateRenderer
 {

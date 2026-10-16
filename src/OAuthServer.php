@@ -37,6 +37,7 @@ final class OAuthServer
     /**
      * A server whose pages render with $request.
      *
+     * @internal Used by the plugin's controller; not part of the public API.
      * @param \Cake\Http\ServerRequest $request The current request.
      * @return \CakeDC\OAuth\Server\AuthorizationServer
      */
@@ -127,6 +128,7 @@ final class OAuthServer
      * (layout scripts do not run), `frame-ancestors` or `base-uri`. The pages' controller applies the
      * result with `withHeader('Content-Security-Policy', ...)` after the core built the response.
      *
+     * @internal Used by the plugin's controller; not part of the public API.
      * @param bool $connections True for the connections page, false for the consent and error pages.
      * @return string|null
      */

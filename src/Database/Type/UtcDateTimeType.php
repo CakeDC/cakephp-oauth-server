@@ -11,6 +11,8 @@ use Cake\Database\TypeFactory;
  * A datetime column type that always reads and writes UTC, whatever the application's default timezone is.
  *
  * Token lifetimes, the refresh grace window and the family cap are computed in UTC by the core.
+ *
+ * @internal
  */
 class UtcDateTimeType extends DateTimeType
 {

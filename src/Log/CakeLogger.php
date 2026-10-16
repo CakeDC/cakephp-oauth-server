@@ -11,6 +11,8 @@ use Throwable;
 
 /**
  * The core's logger, writing to Cake's log with the `oauth` scope.
+ *
+ * @internal
  */
 final class CakeLogger extends AbstractLogger
 {

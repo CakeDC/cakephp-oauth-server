@@ -9,6 +9,8 @@ use CakeDC\OAuth\Server\View\ErrorPageRendererInterface;
 
 /**
  * The error page as a Cake template (`templates/OAuth/error.php`).
+ *
+ * @internal
  */
 final class CakeErrorPageRenderer implements ErrorPageRendererInterface
 {

@@ -16,6 +16,9 @@ First release. An OAuth 2.1 authorization server for CakePHP 5 on top of cakedc/
   when the base is detected at runtime.
 - Deployment docs: set `OAuthServer.issuer` or `App.fullBaseUrl` explicitly; the skeleton otherwise fills it
   from the `Host` header.
+- Public API boundary: `PluginConfig`, `ServerFactory`, the template renderers, `UsersIntegration`,
+  `PluginMessagesLoader`, `UtcDateTimeType`, `RbacPermissionsProvider`, the event dispatcher and the logger are
+  `@internal`, as are `OAuthServer::pageCsp()` and `OAuthServer::forRequest()`.
 - Routes for the metadata document and the authorize, token, register, revoke, introspect and connections
   endpoints, handled by `OAuthController`.
 - ORM storage (`OrmStorage`) and one migration for `oauth_clients`, `oauth_authorization_codes`,

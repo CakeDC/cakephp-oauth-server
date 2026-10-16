@@ -13,6 +13,8 @@ use ReflectionClass;
  * event is the subject and the `event` data.
  *
  * Listeners must not throw: a throwing listener loses a one-time client secret or the issued tokens.
+ *
+ * @internal
  */
 final class CakeEventDispatcher implements EventDispatcherInterface
 {

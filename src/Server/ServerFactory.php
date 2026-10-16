@@ -27,6 +27,8 @@ use Psr\Http\Message\ServerRequestInterface;
 
 /**
  * Builds the core authorization server with the plugin's Cake implementations.
+ *
+ * @internal
  */
 final class ServerFactory
 {

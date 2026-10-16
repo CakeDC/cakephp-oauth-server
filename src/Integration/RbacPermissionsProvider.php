@@ -11,6 +11,8 @@ use CakeDC\OAuthServer\OAuthServer;
  *
  * cakedc/auth reloads that file over `Configure`, so a rule written there beforehand is lost; the
  * integration sets this class as `Auth.RbacPolicy.adapter.permissions_provider_class` instead.
+ *
+ * @internal
  */
 class RbacPermissionsProvider extends ConfigProvider
 {

@@ -38,3 +38,14 @@ library `cakedc/oauth-server`, whose documentation covers the OAuth side in dept
 - `OAuthServer` is the static entry point: `OAuthServer::server()`, `OAuthServer::forRequest()`,
   `OAuthServer::reset()`, `OAuthServer::csrfSkip()`, `OAuthServer::pageCsp()`, `OAuthServer::token()` and
   `OAuthServer::rbacPermissions()`.
+
+## Public API
+
+Before 1.0 the supported surface is: `OAuthServerPlugin`, `OAuthServer` (except `pageCsp()` and
+`forRequest()`, which the plugin's controller uses), `TokenAuthenticator` and `OAuthServerTokenAuthenticator`,
+`OAuthIdentity`, `OrmStorage`, `OrmUserProvider`, `SessionUserContext`, the Table and Entity classes, the
+commands and `OAuthTestTrait`, plus the configuration keys and events documented here. Everything else
+(`PluginConfig`, `ServerFactory`, the `Cake*Renderer` classes and `CakeTemplateRenderer`, `UsersIntegration`,
+`PluginMessagesLoader`, `UtcDateTimeType`, `RbacPermissionsProvider`, the event dispatcher and the logger) is
+marked `@internal` and may change in any release. `RbacPermissionsProvider` stays referenced by class name in
+`Auth.RbacPolicy.adapter.permissions_provider_class`; that value is configuration, the class itself is not API.

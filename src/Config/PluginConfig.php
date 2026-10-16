@@ -18,6 +18,8 @@ use Psr\Clock\ClockInterface;
 
 /**
  * The `OAuthServer` configuration: core settings for the server, plus the plugin's own.
+ *
+ * @internal
  */
 final class PluginConfig
 {
