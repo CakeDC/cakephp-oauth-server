@@ -9,6 +9,7 @@ use Cake\I18n\Package;
 use Cake\I18n\Parser\PoFileParser;
 use Cake\I18n\TranslatorRegistry;
 use Locale;
+use ReflectionException;
 use ReflectionProperty;
 
 /**
@@ -30,7 +31,12 @@ final class PluginMessagesLoader
     public static function register(): void
     {
         // An application that registered its own loader for the domain keeps it.
-        $loaders = (new ReflectionProperty(TranslatorRegistry::class, '_loaders'))->getValue(I18n::translators());
+        try {
+            $loaders = (new ReflectionProperty(TranslatorRegistry::class, '_loaders'))->getValue(I18n::translators());
+        } catch (ReflectionException) {
+            // Cake renamed the property: register the plugin loader, which already merges the app's files.
+            $loaders = null;
+        }
         if (is_array($loaders) && isset($loaders[self::DOMAIN]) && !$loaders[self::DOMAIN] instanceof self) {
             return;
         }

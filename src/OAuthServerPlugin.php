@@ -9,7 +9,9 @@ use Cake\Core\PluginApplicationInterface;
 use Cake\Log\Engine\BaseLog;
 use Cake\Log\Engine\FileLog;
 use Cake\Log\Log;
+use Cake\Routing\RouteBuilder;
 use CakeDC\OAuth\Server\AuthorizationServer;
+use CakeDC\OAuthServer\Config\PluginConfig;
 use CakeDC\OAuthServer\I18n\PluginMessagesLoader;
 
 /**
@@ -64,5 +66,25 @@ class OAuthServerPlugin extends BasePlugin
     public function services(ContainerInterface $container): void
     {
         $container->addShared(AuthorizationServer::class, static fn(): AuthorizationServer => OAuthServer::server());
+    }
+
+    /**
+     * Connects the metadata document and the endpoints.
+     *
+     * An invalid issuer or route prefix fails here, at boot, with an error that names the setting, instead
+     * of connecting routes that do not match the metadata document the server publishes.
+     *
+     * @param \Cake\Routing\RouteBuilder $routes The builder.
+     * @return void
+     * @throws \InvalidArgumentException For an invalid configuration.
+     */
+    public function routes(RouteBuilder $routes): void
+    {
+        $config = PluginConfig::fromConfigure();
+        $defaults = ['plugin' => 'CakeDC/OAuthServer', 'controller' => 'OAuth'];
+        $routes->connect($config->metadataPath(), $defaults + ['action' => 'metadata']);
+        foreach (['authorize', 'token', 'register', 'revoke', 'introspect', 'connections'] as $action) {
+            $routes->connect($config->routePrefix() . '/' . $action, $defaults + ['action' => $action]);
+        }
     }
 }
