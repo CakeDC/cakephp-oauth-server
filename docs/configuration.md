@@ -135,9 +135,21 @@ Used only with `CakeDC/Users`.
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `users.resource` | string | the server's default resource | The resource the integration's token authenticator validates against |
+| `users.paths` | list of strings | `tokenPaths`, else the path of the resource | The path prefixes where the integration's token authenticator authenticates |
 
-Without it the authenticator accepts tokens of the default resource on every application route, so scope
-checks are your job. See [cakedc-users](cakedc-users.md).
+The authenticator accepts a token only below those paths, and scope checks inside them are your job. See
+[cakedc-users](cakedc-users.md).
+
+### `tokenPaths`
+
+A list of path prefixes (`['/api', '/mcp']`) where bearer tokens of this server are expected. Optional.
+`OAuthServer::csrfSkip()` skips CSRF for a bearer request only below these paths, and the cakedc/users
+integration authenticates only below them when `users.paths` is not set. Default: the paths of the declared
+`resources`, where a resource at the host root contributes nothing. Set `['/']` to make tokens work on every
+route; that is a deliberate choice, never a default. Prefixes match on segment boundaries (`/api` covers
+`/api/x`, not `/apix`) and are compared with the full request path, base directory included. If you set
+custom `paths` on your own Token authenticator, set `tokenPaths` to the same list (or pass it to
+`csrfSkip($request, $paths)`).
 
 ### `services`
 

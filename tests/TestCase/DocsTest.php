@@ -43,7 +43,7 @@ class DocsTest extends TestCase
                     // Plugin settings.
                     'userProvider', 'className', 'table', 'finder', 'displayField', 'canAuthorize', 'forClient',
                     'scopes', 'login', 'redirectParam', 'identityAttribute', 'consent', 'layout', 'connections',
-                    'enabled', 'rateLimit', 'cache', 'services', 'clock', 'transport', 'dns', 'users.resource',
+                    'enabled', 'rateLimit', 'cache', 'services', 'clock', 'transport', 'dns', 'users.resource', 'users.paths', 'tokenPaths',
                     // Core settings.
                     'issuer', 'secret', 'resources', 'defaultResource', 'routePrefix', 'tokenPrefix', 'lifetimes',
                     'refreshTokens', 'registration', 'cimd', 'clientCredentials', 'introspection',

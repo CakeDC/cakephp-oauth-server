@@ -56,6 +56,13 @@ The Token authenticator builds the OAuth server in its constructor, so an invali
 configuration (an undeclared resource in the authenticator's `resource`, an unknown key, a wrong type)
 breaks every request, including the login page. Run `bin/cake oauth check` and fix what it names.
 
+## 401 "The access token is not valid at this address"
+
+A valid token was sent to a route outside its resource's path. A token works only below the path of its
+resource (`/api` for `https://example.com/api`, or the authenticator's `paths`); anywhere else the request is
+refused. Call the resource at its own URL, or set `paths` (and `OAuthServer.tokenPaths`) if your routes live
+elsewhere ([protecting-apis](protecting-apis.md#where-a-token-works)).
+
 ## "The `Token` alias has already been loaded"
 
 With `cakedc/users`, load the authenticator as `CakeDC/OAuthServer.OAuthServerToken` (the integration

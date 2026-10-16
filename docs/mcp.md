@@ -68,7 +68,9 @@ this plugin, next to your MCP endpoint.
 
 MCP clients POST to your endpoint with `Authorization: Bearer ...`. With `OAuthServer::csrfSkip()` in your
 `CsrfProtectionMiddleware` (see [installation](installation.md#csrf)) those POSTs are not rejected with 403,
-while CSRF stays on for session routes. Never disable it globally.
+while CSRF stays on for session routes. The skip applies below the path of your MCP resource only
+(`/mcp` for `https://example.com/mcp`), and the Token authenticator likewise accepts the token only there,
+so the token cannot be used on the rest of your application. Never disable CSRF globally.
 
 ## 3. Connect a client
 

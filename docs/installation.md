@@ -78,13 +78,24 @@ public function middleware(MiddlewareQueue $middlewareQueue): MiddlewareQueue
 
 - a request to the route prefix (`/oauth` by default) plus `token`, `register`, `revoke` or `introspect`;
 - a request carrying `Authorization: Bearer <token>` where the token starts with this server's own prefix
-  (`<tokenPrefix>_at_` or `<tokenPrefix>_pat_`). So a bearer authenticated POST to your API or MCP route is
-  not rejected with 403. An Authorization header is not an ambient credential: a page on another site
-  cannot make the browser send a valid token.
+  (`<tokenPrefix>_at_` or `<tokenPrefix>_pat_`) **and whose path is below the path of one of your
+  resources**. A token is for one resource and works only where that resource lives, so a bearer
+  authenticated POST to `/api/posts` (resource `https://example.com/api`) or to your MCP route is not
+  rejected with 403, while the same header on `/account/delete` is still CSRF checked. An Authorization
+  header is not an ambient credential: a page on another site cannot make the browser send a valid token.
+
+The paths are those of the declared resources (`https://example.com/api` is `/api`, matched on segment
+boundaries: `/api` and `/api/x`, not `/apix`), or the list in `OAuthServer.tokenPaths`
+([configuration](configuration.md#tokenpaths)) when you set it, or the `$paths` argument of
+`csrfSkip($request, $paths)`. A resource at the host root (`https://example.com`) adds no path by
+itself: covering every route takes an explicit `'tokenPaths' => ['/']`. Paths are compared after the
+normalisation the router applies (URL-decoded, duplicate and trailing slashes ignored, base directory
+included); a path with `.` or `..` segments is never skipped.
 
 Everything else stays CSRF checked: session routes, requests with no bearer or a foreign one, and the
 consent and connections pages (`<prefix>/authorize` and `<prefix>/connections` are never skipped, even with
-a bearer header, because they are session pages). Never disable CSRF protection globally.
+a bearer header, because they are session pages; variants such as a trailing slash or `%61uthorize` are the
+same page). Never disable CSRF protection globally.
 
 A global `CsrfProtectionMiddleware` also sets a `csrfToken` cookie on the metadata response, which is
 publicly cacheable. Either scope CSRF away from `/.well-known` or accept the cookie.
@@ -118,7 +129,9 @@ reads the identity from the request attribute of your `cakephp/authentication` s
 default, or the attribute your authentication service reports).
 
 A minimal `getAuthenticationService()`, with a form login and the plugin's token authenticator for your
-API routes:
+API routes. The authenticator accepts a token only below the path of the token's resource (`/api` for
+`https://example.com/api`); anywhere else a request that carries one of this server's tokens is refused with
+401, so a token for your API can never act as the person on your session pages:
 
 ```php
 // src/Application.php
@@ -139,7 +152,7 @@ class Application extends BaseApplication implements AuthenticationServiceProvid
         ]);
 
         // The token first: a session cookie must not hide a revoked or foreign bearer token.
-        $service->loadAuthenticator('CakeDC/OAuthServer.Token');
+        $service->loadAuthenticator('CakeDC/OAuthServer.Token', ['resource' => 'https://example.com/api']);
         $service->loadAuthenticator('Authentication.Session');
         $service->loadAuthenticator('Authentication.Form', [
             'fields' => ['username' => 'email', 'password' => 'password'],
@@ -162,7 +175,8 @@ Rules to know:
   signing in.
 - A bearer token is never a browser login. The consent and connections pages accept a session login only.
   Stateless authenticators (Token, HttpBasic, JWT, ...) and impersonation are refused, so those requests
-  get the login page. An application that signs people in only with HTTP Basic needs a session login for
+  get the login page (a request that carries one of this server's tokens there is refused with 401, being
+  outside the token's path). An application that signs people in only with HTTP Basic needs a session login for
   the consent page, otherwise people may loop between the login and the consent page.
 - Load `CakeDC/OAuthServer.Token` before the session authenticator. See
   [protecting-apis](protecting-apis.md#authenticator-order).

@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace TestApp\Controller;
 
+use Cake\Core\Configure;
 use Cake\Http\Response;
 use CakeDC\OAuthServer\OAuthServer;
 
@@ -40,5 +41,18 @@ class PagesController extends AppController
             'id' => $identity->getIdentifier(),
             'scopes' => $token?->scopes,
         ]));
+    }
+
+    /**
+     * A state-changing session action: it records that it ran.
+     *
+     * @return \Cake\Http\Response
+     */
+    public function deleteAccount(): Response
+    {
+        $this->Authorization->skipAuthorization();
+        Configure::write('TestApp.accountDeleted', true);
+
+        return $this->response->withStringBody('deleted ' . (string)$this->Authentication->getIdentity()?->getIdentifier());
     }
 }

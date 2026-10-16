@@ -26,7 +26,7 @@ When `CakeDC/Users` is loaded, `OAuthServerPlugin::bootstrap()` applies
 | Finder | `active` (cakedc/users defines it) |
 | Name on the consent page | `username` (override with `userProvider.displayField`) |
 | Login | `['plugin' => 'CakeDC/Users', 'controller' => 'Users', 'action' => 'login', 'prefix' => false]` (override with `login.url`) |
-| Authenticator | `Auth.Authenticators.OAuthServerToken`, put first, with `className` `CakeDC/OAuthServer.OAuthServerToken` and `skipTwoFactorVerify` `true`. It gets `resource` from `OAuthServer.users.resource` when you set it |
+| Authenticator | `Auth.Authenticators.OAuthServerToken`, put first, with `className` `CakeDC/OAuthServer.OAuthServerToken` and `skipTwoFactorVerify` `true`. It gets `resource` from `OAuthServer.users.resource` when you set it, and `paths` from `OAuthServer.users.paths`, else `OAuthServer.tokenPaths`, else the path of the resource |
 | RBAC rules | `Auth.RbacPolicy.adapter.permissions_provider_class` set to `CakeDC\OAuthServer\Integration\RbacPermissionsProvider`, unless your application already set its own provider |
 
 Notes:
@@ -39,8 +39,11 @@ Notes:
   cannot make the request run as the session user.
 - If `Auth.Authenticators.OAuthServerToken` is already set, the plugin leaves it alone.
 - Set `OAuthServer.users.resource` to the resource your API routes belong to. Without it the authenticator
-  accepts tokens of the default resource on every application route, and checking scopes becomes your
-  job: `OAuthServer::token($request)->hasScope('content:read')`. See
+  validates tokens of the default resource. Either way a token works only below its resource's path
+  (`/api` for `https://example.com/api`): on cakedc/users pages such as `/profile` or `/logout` a request
+  carrying this server's token is refused with 401 and never reaches the controller. Inside the path,
+  checking scopes is your job: `OAuthServer::token($request)->hasScope('content:read')`. A resource at the
+  host root needs `OAuthServer.users.paths` (or `OAuthServer.tokenPaths`) set explicitly. See
   [protecting-apis](protecting-apis.md).
 
 ```php

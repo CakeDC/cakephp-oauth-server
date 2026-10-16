@@ -129,6 +129,93 @@ class OAuthServerTest extends TestCase
     /**
      * @return void
      */
+    public function testCsrfSkipForABearerTokenAppliesOnlyBelowTheResourcePaths(): void
+    {
+        $post = fn(string $path, string $base = ''): ServerRequest => (new ServerRequest([
+            'url' => $path,
+            'environment' => ['REQUEST_METHOD' => 'POST', 'HTTP_AUTHORIZATION' => 'Bearer test_at_abc123'],
+        ]))->withAttribute('base', $base);
+
+        // The declared resources are /mcp and /api.
+        foreach (['/api', '/api/x', '/api/x/', '//api//x', '/%61pi/x', '/mcp', '/mcp/tools/call'] as $path) {
+            $this->assertTrue(OAuthServer::csrfSkip($post($path)), $path);
+        }
+        foreach (
+            ['/account/delete', '/apix', '/apix/me', '/', '/login', '/API/me', '/api/../account/delete',
+            '/api/%2e%2e/account/delete', '/mcpx'] as $path
+        ) {
+            $this->assertFalse(OAuthServer::csrfSkip($post($path)), $path);
+        }
+        // The base directory is part of the path the resource lives at.
+        $this->assertFalse(OAuthServer::csrfSkip($post('/api/me', '/sub')));
+    }
+
+    /**
+     * @return void
+     */
+    public function testCsrfNeverSkipsTheSessionPagesWhateverThePathLooksLike(): void
+    {
+        $post = fn(string $path): ServerRequest => new ServerRequest([
+            'url' => $path,
+            'environment' => ['REQUEST_METHOD' => 'POST', 'HTTP_AUTHORIZATION' => 'Bearer test_at_abc123'],
+        ]);
+        Configure::write('OAuthServer.tokenPaths', ['/']);
+
+        foreach (
+            ['/oauth/authorize', '/oauth/authorize/', '/oauth/%61uthorize', '/oauth//authorize',
+            '/OAuth/Authorize', '/oauth/connections', '/oauth/connections/', '/oauth/./authorize',
+            '/oauth/x/../authorize'] as $path
+        ) {
+            $this->assertFalse(OAuthServer::csrfSkip($post($path)), $path);
+        }
+        // The token endpoint is skipped with the same normalisation.
+        $this->assertTrue(OAuthServer::csrfSkip($post('/oauth/token/')));
+        $this->assertTrue(OAuthServer::csrfSkip($post('/oauth//token')));
+    }
+
+    /**
+     * @return void
+     */
+    public function testCsrfSkipUsesTokenPathsWhenConfiguredAndAnExplicitArgumentOverRules(): void
+    {
+        $post = fn(string $path): ServerRequest => new ServerRequest([
+            'url' => $path,
+            'environment' => ['REQUEST_METHOD' => 'POST', 'HTTP_AUTHORIZATION' => 'Bearer test_at_abc123'],
+        ]);
+
+        Configure::write('OAuthServer.tokenPaths', ['/rest']);
+        $this->assertTrue(OAuthServer::csrfSkip($post('/rest/x')));
+        $this->assertFalse(OAuthServer::csrfSkip($post('/api/x')));
+        $this->assertTrue(OAuthServer::csrfSkip($post('/api/x'), ['/api']));
+        $this->assertFalse(OAuthServer::csrfSkip($post('/rest/x'), ['/api']));
+
+        Configure::write('OAuthServer.tokenPaths', ['/']);
+        $this->assertTrue(OAuthServer::csrfSkip($post('/anything/at/all')));
+    }
+
+    /**
+     * @return void
+     */
+    public function testARootResourceDoesNotSkipCsrfEverywhereByItself(): void
+    {
+        Configure::write('OAuthServer.resources', ['http://localhost' => [
+            'name' => 'Whole site',
+            'scopes' => ['all' => 'Everything'],
+        ]]);
+        OAuthServer::reset();
+        $request = new ServerRequest([
+            'url' => '/account/delete',
+            'environment' => ['REQUEST_METHOD' => 'POST', 'HTTP_AUTHORIZATION' => 'Bearer test_at_abc123'],
+        ]);
+
+        $this->assertFalse(OAuthServer::csrfSkip($request));
+        Configure::write('OAuthServer.tokenPaths', ['/']);
+        $this->assertTrue(OAuthServer::csrfSkip($request));
+    }
+
+    /**
+     * @return void
+     */
     public function testPageCspIsExtendedOnlyForAnAppLayout(): void
     {
         $this->assertNull(OAuthServer::pageCsp());

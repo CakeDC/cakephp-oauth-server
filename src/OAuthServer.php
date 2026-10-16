@@ -10,6 +10,7 @@ use CakeDC\OAuth\Server\AuthorizationServer;
 use CakeDC\OAuth\Server\Http\HttpResponder;
 use CakeDC\OAuth\Server\Token\ValidatedToken;
 use CakeDC\OAuthServer\Config\PluginConfig;
+use CakeDC\OAuthServer\Http\RequestPaths;
 use CakeDC\OAuthServer\Identity\OAuthIdentity;
 use CakeDC\OAuthServer\Server\ServerFactory;
 use Psr\Http\Message\ServerRequestInterface;
@@ -56,32 +57,47 @@ final class OAuthServer
 
     /**
      * Whether $request needs no CSRF token: it goes to an endpoint OAuth clients call (token, register,
-     * revoke, introspect), or it carries a bearer token of this server (`<prefix>_at_` or `<prefix>_pat_`).
-     * Use it in CsrfProtectionMiddleware::skipCheckCallback().
+     * revoke, introspect), or it carries a bearer token of this server (`<prefix>_at_` or `<prefix>_pat_`)
+     * and its path is where such a token is accepted. Use it in CsrfProtectionMiddleware::skipCheckCallback().
      *
      * An Authorization header is not an ambient credential: a page on another site cannot make the browser
-     * attach a valid token. The consent and connections pages are session pages and are never skipped, with
-     * or without a bearer token. Requests without a bearer token, or with a foreign one, stay checked.
+     * attach a valid token. But a token is only honoured below its resource's path (see TokenAuthenticator), so
+     * the skip applies there alone: by default the paths of the declared resources, or `OAuthServer.tokenPaths`,
+     * or $paths. The consent and connections pages are session pages and are never skipped, with or without a
+     * bearer token; paths are compared after the normalisation the router applies, and a path with `.` or `..`
+     * segments is never skipped. Requests without a bearer token, or with a foreign one, stay checked.
      *
      * @param \Psr\Http\Message\ServerRequestInterface $request The request.
+     * @param list<string>|null $paths Path prefixes where a bearer token is accepted, when the application's
+     *   Token authenticator uses custom `paths`; null for the configured ones.
      * @return bool
      */
-    public static function csrfSkip(ServerRequestInterface $request): bool
+    public static function csrfSkip(ServerRequestInterface $request, ?array $paths = null): bool
     {
-        $prefix = PluginConfig::fromConfigure()->routePrefix();
-        $path = $request->getUri()->getPath();
+        $config = PluginConfig::fromConfigure();
+        $prefix = $config->routePrefix();
+        $path = RequestPaths::normalize($request->getUri()->getPath());
+        if ($path === null) {
+            return false;
+        }
         foreach (['token', 'register', 'revoke', 'introspect'] as $endpoint) {
-            if ($path === $prefix . '/' . $endpoint) {
+            if ($path === RequestPaths::normalize($prefix . '/' . $endpoint)) {
                 return true;
             }
         }
         foreach (['authorize', 'connections'] as $page) {
-            if ($path === $prefix . '/' . $page) {
+            if (strtolower($path) === strtolower((string)RequestPaths::normalize($prefix . '/' . $page))) {
                 return false;
             }
         }
+        if (!self::hasOwnBearer($request)) {
+            return false;
+        }
+        if ($paths !== null) {
+            $paths = array_values(array_filter(array_map(RequestPaths::normalize(...), $paths), 'is_string'));
+        }
 
-        return self::hasOwnBearer($request);
+        return RequestPaths::within(RequestPaths::fullPath($request), $paths ?? $config->bearerPaths());
     }
 
     /**

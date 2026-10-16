@@ -41,6 +41,7 @@ Options of `CakeDC\OAuthServer\Authenticator\TokenAuthenticator`:
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `resource` | `null` | The resource identifier the token must be issued for. `null` is the server's default resource. It must be declared in `OAuthServer.resources`, or the constructor throws `InvalidArgumentException` |
+| `paths` | the path of the resource identifier | Path prefixes where the authenticator authenticates, for example `['/api']`. Matched on segment boundaries (`/api` covers `/api` and `/api/x`, not `/apix`) against the full request path, base directory included, after the router's normalisation. A resource at the host root (`https://example.com`) needs `paths` set explicitly (`['/']` covers every route), otherwise the constructor throws `InvalidArgumentException` |
 | `header` | `Authorization` | The request header that carries the bearer token |
 | `resourceMetadataUrl` | `null` | URL of the protected resource metadata document (RFC 9728) that your endpoint serves. When set, it is added to the 401 challenge as `resource_metadata` |
 | `skipTwoFactorVerify` | `true` | For `cakedc/users`: a token is not asked for a second factor |
@@ -57,8 +58,23 @@ example a resource that is not declared) therefore breaks every request, the log
 Load `CakeDC/OAuthServer.Token` before the session authenticator. The first authenticator that succeeds
 wins: if the session came first, a request that carries a session cookie and a revoked or foreign bearer
 token would run as the session user and the token would never be checked. With the token first, a request
-with a valid bearer token on `/oauth/authorize` is the token's request (not a browser login), so it is
-sent to the login page.
+with a bearer token on `/oauth/authorize` is the token's request (not a browser login), and being outside
+the token's path it is refused with 401.
+
+## Where a token works
+
+A token is for one resource, and that resource lives at its URL (RFC 8707). The authenticator therefore
+authenticates only below its `paths` (by default the path of the `resource`). A request that carries one
+of this server's tokens anywhere else is challenged with 401 (`error="invalid_token"`) and never
+authenticated, even when it also carries a session cookie, so a token for `https://example.com/api`
+cannot act as the person on `/account/delete` or on any other route of your application. Requests without
+one of this server's tokens, or with a foreign one, pass on to your other authenticators as before.
+
+Inside its path the token proves who the caller is and which scopes were granted, nothing more: your
+actions still check `OAuthServer::token($request)->hasScope(...)`. CSRF is skipped only below the same
+paths (see [installation](installation.md#csrf)); keep both lists consistent when you set custom `paths`
+by passing the same list to `OAuthServer::csrfSkip($request, $paths)` or by setting
+`OAuthServer.tokenPaths`.
 
 Use one Token authenticator per authentication service. A token carrying this server's prefix but issued
 for a different resource than the authenticator's `resource` is challenged with 401.
@@ -98,8 +114,8 @@ Pragma: no-cache
 
 A bearer authenticated POST, PUT or DELETE to your API route would be rejected by Cake's CSRF middleware,
 because API clients send no CSRF token. `OAuthServer::csrfSkip()` (see [installation](installation.md#csrf))
-returns `true` for requests carrying a bearer token of this server, so using it in
-`skipCheckCallback()` is enough. Keep CSRF protection on for your session routes and never disable it
+returns `true` for requests carrying a bearer token of this server below the path of a resource, so using it
+in `skipCheckCallback()` is enough. Keep CSRF protection on for your session routes and never disable it
 globally: requests with no bearer token, or with a foreign one, are still checked.
 
 ## Reading the token and checking scopes

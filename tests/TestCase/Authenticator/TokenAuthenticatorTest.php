@@ -120,8 +120,7 @@ class TokenAuthenticatorTest extends TestCase
             'scope' => 'content:write',
         ], '', '&', PHP_QUERY_RFC3986));
 
-        $this->assertResponseCode(302);
-        $this->assertRedirectContains('/login');
+        $this->assertResponseCode(401);
     }
 
     public function testABearerTokenCannotOpenTheConnectionsPage(): void
@@ -129,8 +128,7 @@ class TokenAuthenticatorTest extends TestCase
         $this->configRequest(['headers' => ['Authorization' => 'Bearer ' . $this->personalToken('1', 'http://localhost/api')]]);
         $this->get('/oauth/connections');
 
-        $this->assertResponseCode(302);
-        $this->assertRedirectContains('/login');
+        $this->assertResponseCode(401);
     }
 
     public function testAnUndeclaredResourceFailsWhenTheAuthenticatorIsBuilt(): void
@@ -156,7 +154,8 @@ class TokenAuthenticatorTest extends TestCase
             'resource' => 'http://localhost/api',
             'resourceMetadataUrl' => "https://x.example/a\"b\\c\x01d",
         ]);
-        $request = (new ServerRequest())->withHeader('Authorization', 'Bearer test_at_' . str_repeat('x', 43));
+        $request = (new ServerRequest(['url' => '/api/me']))
+            ->withHeader('Authorization', 'Bearer test_at_' . str_repeat('x', 43));
         $authenticator->authenticate($request);
 
         try {
@@ -189,7 +188,7 @@ class TokenAuthenticatorTest extends TestCase
         try {
             $authenticator = new TokenAuthenticator(new IdentifierCollection(), ['resource' => 'http://localhost/api']);
             $authenticate = fn(string $value) => $authenticator->authenticate(
-                (new ServerRequest())->withHeader('Authorization', 'Bearer ' . $value),
+                (new ServerRequest(['url' => '/api/me']))->withHeader('Authorization', 'Bearer ' . $value),
             );
             $suffix = str_repeat('x', 43);
             $clock->calls = 0;
@@ -226,11 +225,11 @@ class TokenAuthenticatorTest extends TestCase
                 'code_challenge_method' => 'S256',
                 'scope' => 'content:write',
             ], '', '&', PHP_QUERY_RFC3986));
-            $this->assertRedirectContains('/login');
+            $this->assertResponseCode(401);
 
             $this->configRequest(['headers' => ['Authorization' => 'Bearer ' . $this->personalToken()]]);
             $this->get('/oauth/connections');
-            $this->assertRedirectContains('/login');
+            $this->assertResponseCode(401);
         } finally {
             Configure::delete('TestApp.identityAttribute');
         }

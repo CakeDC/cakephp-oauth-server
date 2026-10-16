@@ -19,7 +19,8 @@ final class UsersIntegration
      * what the application set.
      *
      * The authenticator validates against `OAuthServer.users.resource` when set, otherwise against the
-     * server's default resource.
+     * server's default resource, and only below `OAuthServer.users.paths` or `OAuthServer.tokenPaths` when
+     * set, otherwise below the path of that resource.
      *
      * @return void
      */
@@ -31,9 +32,14 @@ final class UsersIntegration
                 'className' => 'CakeDC/OAuthServer.OAuthServerToken',
                 'skipTwoFactorVerify' => true,
             ];
-            $resource = PluginConfig::fromConfigure()->usersResource();
+            $config = PluginConfig::fromConfigure();
+            $resource = $config->usersResource();
             if ($resource !== null) {
                 $settings['resource'] = $resource;
+            }
+            $paths = $config->usersPaths();
+            if ($paths !== null) {
+                $settings['paths'] = $paths;
             }
             // First in line: the first authenticator that succeeds wins, so a session cookie sent along with a
             // revoked or foreign bearer token would otherwise run as the session user, the token unchecked.

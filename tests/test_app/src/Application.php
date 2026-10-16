@@ -70,6 +70,11 @@ class Application extends BaseApplication implements
         $routes->scope('/', function (RouteBuilder $builder): void {
             $builder->connect('/login', ['controller' => 'Pages', 'action' => 'login']);
             $builder->connect('/api/me', ['controller' => 'Pages', 'action' => 'me']);
+            // Deeper API routes, and a sibling whose name starts with "api".
+            $builder->connect('/api/**', ['controller' => 'Pages', 'action' => 'me']);
+            $builder->connect('/apix/**', ['controller' => 'Pages', 'action' => 'me']);
+            // A session route that changes state.
+            $builder->connect('/account/delete', ['controller' => 'Pages', 'action' => 'deleteAccount']);
             $builder->fallbacks();
         });
     }

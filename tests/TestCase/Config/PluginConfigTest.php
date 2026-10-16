@@ -320,4 +320,48 @@ class PluginConfigTest extends TestCase
             }
         }
     }
+
+    public function testTokenPathsAreNormalizedAndDefaultToTheResourcePaths(): void
+    {
+        $resources = [
+            'https://example.com/mcp' => ['scopes' => ['a' => 'A']],
+            'https://example.com/api/v1' => ['scopes' => ['b' => 'B']],
+            'https://example.com/' => ['scopes' => ['c' => 'C']],
+        ];
+        $config = new PluginConfig(['issuer' => 'https://example.com', 'resources' => $resources]);
+
+        $this->assertNull($config->tokenPaths());
+        $this->assertNull($config->usersPaths());
+        // The root resource adds nothing: covering every route is an explicit choice.
+        $this->assertSame(['/mcp', '/api/v1'], $config->bearerPaths());
+
+        $config = new PluginConfig(['issuer' => 'https://example.com', 'resources' => $resources,
+            'tokenPaths' => ['/rest/', '//a']]);
+        $this->assertSame(['/rest', '/a'], $config->tokenPaths());
+        $this->assertSame(['/rest', '/a'], $config->bearerPaths());
+        $this->assertSame(['/rest', '/a'], $config->usersPaths());
+
+        $config = new PluginConfig(['issuer' => 'https://example.com', 'resources' => $resources,
+            'tokenPaths' => ['/rest'], 'users' => ['paths' => ['/me']]]);
+        $this->assertSame(['/me'], $config->usersPaths());
+    }
+
+    public function testInvalidTokenPathsAreRefused(): void
+    {
+        foreach (['tokenPaths' => [[], ['api'], [1], '/api', ['/a/../b']]] as $key => $values) {
+            foreach ($values as $value) {
+                $config = new PluginConfig(['resources' => ['https://example.com/a' => ['scopes' => ['a' => 'A']]],
+                    'issuer' => 'https://example.com', $key => $value]);
+                try {
+                    $config->tokenPaths();
+                    $this->fail('Refused: ' . json_encode($value));
+                } catch (InvalidArgumentException $e) {
+                    $this->assertStringContainsString('OAuthServer.tokenPaths', $e->getMessage());
+                }
+            }
+        }
+        $config = new PluginConfig(['users' => ['paths' => 'api']]);
+        $this->expectException(InvalidArgumentException::class);
+        $config->usersPaths();
+    }
 }

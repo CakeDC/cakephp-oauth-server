@@ -311,14 +311,15 @@ class EndToEndTest extends TestCase
 
         $this->withOAuthToken($token);
         $this->get('/oauth/authorize?' . $this->authorizeQuery($client->clientId, 'https://app.example.com/cb'));
-        $this->assertRedirectContains('/login?redirect=');
+        // The token is for /api: anywhere else it is judged and refused, never a login.
+        $this->assertResponseCode(401);
         $this->assertResponseNotContains('wants to access');
         $this->assertNull($this->_requestSession->read('Auth'));
         $this->assertSame([], $this->fetchTable('CakeDC/OAuthServer.OauthConsents')->find()->all()->toArray());
 
         $this->withOAuthToken($token);
         $this->get('/oauth/connections');
-        $this->assertRedirectContains('/login');
+        $this->assertResponseCode(401);
         $this->assertResponseNotContains('Connected applications');
         $this->assertNull($this->_requestSession->read('Auth'));
     }
@@ -357,12 +358,12 @@ class EndToEndTest extends TestCase
         $client = OAuthServer::server()->clientRegistrar()
             ->create('App', ['https://app.example.com/cb'], false)['client'];
 
-        // The request authenticates as the token identity, which is never a browser login: fail closed.
+        // The token is presented outside its resource's path: it is judged and refused, never a login.
         $this->session(['Auth' => ['id' => 1]]);
         $this->withOAuthToken($token);
         $this->get('/oauth/authorize?' . $this->authorizeQuery($client->clientId, 'https://app.example.com/cb'));
 
-        $this->assertRedirectContains('/login?redirect=');
+        $this->assertResponseCode(401);
         $this->assertResponseNotContains('wants to access');
     }
 

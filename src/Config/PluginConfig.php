@@ -11,6 +11,7 @@ use CakeDC\OAuth\Server\Client\Cimd\DnsResolverInterface;
 use CakeDC\OAuth\Server\Client\Cimd\HttpTransportInterface;
 use CakeDC\OAuth\Server\Config\ServerConfig;
 use CakeDC\OAuth\Server\Resource\ResourceIdentifier;
+use CakeDC\OAuthServer\Http\RequestPaths;
 use CakeDC\OAuthServer\Identity\OrmUserProvider;
 use InvalidArgumentException;
 use Psr\Clock\ClockInterface;
@@ -26,7 +27,8 @@ final class PluginConfig
         'consent' => ['layout'],
         'connections' => ['enabled', 'layout'],
         'services' => ['clock', 'transport', 'dns'],
-        'users' => ['resource'],
+        'users' => ['resource', 'paths'],
+        'tokenPaths' => [],
     ];
 
     private const SERVICE_TYPES = [
@@ -278,6 +280,84 @@ final class PluginConfig
         }
 
         return $resource;
+    }
+
+    /**
+     * The path prefixes the Token authenticator of the cakedc/users integration authenticates in:
+     * `OAuthServer.users.paths`, else `OAuthServer.tokenPaths`, else null (the path of its resource).
+     *
+     * @return list<string>|null
+     */
+    public function usersPaths(): ?array
+    {
+        return self::pathList($this->section('users')['paths'] ?? null, 'OAuthServer.users.paths')
+            ?? $this->tokenPaths();
+    }
+
+    /**
+     * The path prefixes configured in `OAuthServer.tokenPaths`, or null when it is not set.
+     *
+     * @return list<string>|null
+     * @throws \InvalidArgumentException
+     */
+    public function tokenPaths(): ?array
+    {
+        return self::pathList($this->settings['tokenPaths'] ?? null, 'OAuthServer.tokenPaths');
+    }
+
+    /**
+     * Where a bearer token of this server is expected, which is where CSRF protection is skipped for it:
+     * `OAuthServer.tokenPaths` when set, otherwise the paths of the declared resources. A resource at the host
+     * root contributes nothing: covering every route takes an explicit `OAuthServer.tokenPaths = ['/']`.
+     *
+     * @return list<string>
+     */
+    public function bearerPaths(): array
+    {
+        $configured = $this->tokenPaths();
+        if ($configured !== null) {
+            return $configured;
+        }
+        $paths = [];
+        foreach ($this->serverConfig()->resources->all() as $resource) {
+            $path = RequestPaths::ofResource($resource->identifier);
+            if ($path !== '/') {
+                $paths[] = $path;
+            }
+        }
+
+        return array_values(array_unique($paths));
+    }
+
+    /**
+     * A list of path prefixes setting, normalized.
+     *
+     * @param mixed $value The raw setting.
+     * @param string $setting Setting name, for the error.
+     * @return list<string>|null
+     * @throws \InvalidArgumentException
+     */
+    private static function pathList(mixed $value, string $setting): ?array
+    {
+        if ($value === null) {
+            return null;
+        }
+        $paths = [];
+        foreach (is_array($value) ? $value : [] as $path) {
+            $normalized = is_string($path) && str_starts_with($path, '/') ? RequestPaths::normalize($path) : null;
+            if ($normalized === null) {
+                $paths = [];
+                break;
+            }
+            $paths[] = $normalized;
+        }
+        if ($paths === []) {
+            throw new InvalidArgumentException(
+                sprintf('"%s" must be a non-empty list of path prefixes that start with "/".', $setting),
+            );
+        }
+
+        return $paths;
     }
 
     /**

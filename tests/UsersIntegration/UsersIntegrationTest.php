@@ -155,16 +155,17 @@ class UsersIntegrationTest extends TestCase
         $client = OAuthServer::server()->clientRegistrar()
             ->create('Claude', ['https://app.example.com/cb'], false)['client'];
 
+        // The token is for /api: anywhere else it is judged and refused, never a login.
         $this->withOAuthToken($token);
         $this->get($this->prefix . '/authorize?' . $this->authorizeQuery($client->clientId));
-        $this->assertRedirectContains('/login?redirect=');
+        $this->assertResponseCode(401);
         $this->assertResponseNotContains('Signed in as');
         $this->assertNull($this->_requestSession->read('Auth'));
         $this->assertSame([], $this->_requestSession->read() ?? []);
 
         $this->withOAuthToken($token);
         $this->get($this->prefix . '/connections');
-        $this->assertRedirectContains('/login');
+        $this->assertResponseCode(401);
         $this->assertNull($this->_requestSession->read('Auth'));
         $this->assertSame([], $this->_requestSession->read() ?? []);
     }
@@ -317,7 +318,65 @@ class UsersIntegrationTest extends TestCase
         $this->withOAuthToken($token);
         $this->get($this->prefix . '/authorize?' . $this->authorizeQuery($client->clientId));
 
-        $this->assertRedirectContains('/login?redirect=');
+        $this->assertResponseCode(401);
         $this->assertResponseNotContains('Signed in as');
+    }
+
+    public function testATokenForTheApiOpensNoCakeDcUsersPage(): void
+    {
+        $user = $this->createUser();
+        $token = $this->oauthTokenFor($user, ['api'], 'http://localhost/api');
+
+        // Reading pages: challenged, the controller never runs.
+        foreach (['/profile', '/logout', '/users/change-password'] as $url) {
+            $this->withOAuthToken($token);
+            $this->get($url);
+            $this->assertResponseCode(401, $url);
+            $this->assertHeaderContains('WWW-Authenticate', 'Bearer error="invalid_token"');
+            $this->assertResponseNotContains('ada@example.com');
+        }
+
+        // The reviewer's probe: a state-changing POST with no CSRF token, then with one.
+        $before = (string)$this->fetchTable('CakeDC/Users.Users')->get($user->get('id'))->get('password');
+        $form = ['password' => 'new-password-123', 'password_confirm' => 'new-password-123'];
+        $this->withOAuthToken($token);
+        $this->post('/users/change-password', $form);
+        $this->assertResponseCode(403);
+        $this->withOAuthToken($token);
+        $this->enableCsrfToken();
+        $this->post('/users/change-password', $form);
+        $this->assertResponseCode(401);
+        $after = (string)$this->fetchTable('CakeDC/Users.Users')->get($user->get('id'))->get('password');
+        $this->assertSame($before, $after, 'The password must not change.');
+
+        // With a session cookie as well, the presented token is still judged.
+        $this->session(['Auth' => $user]);
+        $this->withOAuthToken($token);
+        $this->get('/profile');
+        $this->assertResponseCode(401);
+    }
+
+    public function testTheAuthenticatorGetsThePathsOfTheUsersResourceOrTheConfiguredOnes(): void
+    {
+        $authenticator = Configure::read('Auth.Authenticators.OAuthServerToken');
+        $original = Configure::read('OAuthServer');
+        try {
+            // Not set: the authenticator derives /api from its resource.
+            $this->assertArrayNotHasKey('paths', $authenticator);
+
+            Configure::delete('Auth.Authenticators.OAuthServerToken');
+            Configure::write('OAuthServer.users.paths', ['/api', '/rest/']);
+            UsersIntegration::apply();
+            $this->assertSame(['/api', '/rest'], Configure::read('Auth.Authenticators.OAuthServerToken.paths'));
+
+            Configure::delete('Auth.Authenticators.OAuthServerToken');
+            Configure::delete('OAuthServer.users.paths');
+            Configure::write('OAuthServer.tokenPaths', ['/']);
+            UsersIntegration::apply();
+            $this->assertSame(['/'], Configure::read('Auth.Authenticators.OAuthServerToken.paths'));
+        } finally {
+            Configure::write('OAuthServer', $original);
+            Configure::write('Auth.Authenticators.OAuthServerToken', $authenticator);
+        }
     }
 }
