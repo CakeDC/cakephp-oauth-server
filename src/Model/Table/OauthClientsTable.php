@@ -5,6 +5,7 @@ namespace CakeDC\OAuthServer\Model\Table;
 
 use Cake\Database\Schema\TableSchemaInterface;
 use Cake\ORM\Table;
+use CakeDC\OAuthServer\Database\Type\UtcDateTimeType;
 
 /**
  * OAuth clients.
@@ -24,16 +25,25 @@ class OauthClientsTable extends Table
     }
 
     /**
-     * Maps the JSON text columns.
+     * Maps the JSON text columns and pins the datetime columns to UTC.
      *
      * @return \Cake\Database\Schema\TableSchemaInterface
      */
     public function getSchema(): TableSchemaInterface
     {
-        return parent::getSchema()
+        $schema = parent::getSchema()
             ->setColumnType('redirect_uris', 'json')
             ->setColumnType('grant_types', 'json')
             ->setColumnType('scopes', 'json')
             ->setColumnType('metadata', 'json');
+
+        return UtcDateTimeType::apply($schema, [
+            'metadata_fetched_at',
+            'metadata_expires_at',
+            'last_used_at',
+            'revoked_at',
+            'created',
+            'modified',
+        ]);
     }
 }

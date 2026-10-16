@@ -5,6 +5,7 @@ namespace CakeDC\OAuthServer\Model\Table;
 
 use Cake\Database\Schema\TableSchemaInterface;
 use Cake\ORM\Table;
+use CakeDC\OAuthServer\Database\Type\UtcDateTimeType;
 
 /**
  * OAuth consents.
@@ -23,13 +24,18 @@ class OauthConsentsTable extends Table
     }
 
     /**
-     * Maps the JSON text columns.
+     * Maps the JSON text columns and pins the datetime columns to UTC.
      *
      * @return \Cake\Database\Schema\TableSchemaInterface
      */
     public function getSchema(): TableSchemaInterface
     {
-        return parent::getSchema()
+        $schema = parent::getSchema()
             ->setColumnType('scopes', 'json');
+
+        return UtcDateTimeType::apply($schema, [
+            'created',
+            'modified',
+        ]);
     }
 }
