@@ -9,10 +9,28 @@ use Cake\Utility\Security;
 use CakeDC\OAuth\Server\Config\ServerConfig;
 use CakeDC\OAuthServer\Config\PluginConfig;
 use CakeDC\OAuthServer\Identity\OrmUserProvider;
+use DateTimeImmutable;
 use InvalidArgumentException;
+use Psr\Clock\ClockInterface;
+use ReflectionProperty;
+use stdClass;
 
 class PluginConfigTest extends TestCase
 {
+    private string $salt;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->salt = Security::getSalt();
+    }
+
+    protected function tearDown(): void
+    {
+        Security::setSalt($this->salt);
+        parent::tearDown();
+    }
+
     public function testCoreSettingsWithCakeDefaults(): void
     {
         $config = PluginConfig::fromConfigure();
@@ -104,5 +122,165 @@ class PluginConfigTest extends TestCase
         $this->expectException(InvalidArgumentException::class);
         $this->expectExceptionMessage('acess');
         PluginConfig::fromConfigure()->serverConfig();
+    }
+
+    public function testHttpBaseUrlNamesTheSettingToFix(): void
+    {
+        Configure::write('App.fullBaseUrl', 'http://app.ddev.site');
+
+        try {
+            PluginConfig::fromConfigure()->serverConfig();
+            $this->fail('Expected an exception.');
+        } catch (InvalidArgumentException $e) {
+            $this->assertStringContainsString('App.fullBaseUrl', $e->getMessage());
+            $this->assertStringContainsString('OAuthServer.issuer', $e->getMessage());
+            $this->assertNotNull($e->getPrevious());
+        }
+    }
+
+    public function testEmptyBaseUrlNamesTheSettingToFix(): void
+    {
+        Configure::write('App.fullBaseUrl', '');
+
+        foreach (['serverConfig', 'routePrefix', 'metadataPath'] as $method) {
+            try {
+                PluginConfig::fromConfigure()->{$method}();
+                $this->fail('Expected an exception.');
+            } catch (InvalidArgumentException $e) {
+                $this->assertStringContainsString('App.fullBaseUrl', $e->getMessage());
+            }
+        }
+    }
+
+    public function testBadConfiguredIssuerNamesTheIssuerSetting(): void
+    {
+        Configure::write('OAuthServer.issuer', 'http://example.com');
+
+        try {
+            PluginConfig::fromConfigure()->serverConfig();
+            $this->fail('Expected an exception.');
+        } catch (InvalidArgumentException $e) {
+            $this->assertStringContainsString('Fix OAuthServer.issuer', $e->getMessage());
+            $this->assertStringNotContainsString('App.fullBaseUrl', $e->getMessage());
+        }
+    }
+
+    public function testExplicitIssuerAndSecretOverrideTheDefaults(): void
+    {
+        $secret = str_repeat('s', 40);
+        Configure::write('App.fullBaseUrl', 'http://app.ddev.site');
+        Configure::write('OAuthServer.issuer', 'https://auth.example.com');
+        Configure::write('OAuthServer.secret', $secret);
+
+        $server = PluginConfig::fromConfigure()->serverConfig();
+
+        $this->assertSame('https://auth.example.com', $server->issuer);
+        $this->assertSame($secret, $server->secret);
+    }
+
+    public function testShortSaltIsRefusedWithoutAConfiguredSecret(): void
+    {
+        Security::setSalt('too-short');
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('OAuthServer.secret');
+        PluginConfig::fromConfigure()->serverConfig();
+    }
+
+    public function testMissingSaltIsRefusedWithoutAConfiguredSecret(): void
+    {
+        $property = new ReflectionProperty(Security::class, '_salt');
+        $property->setValue(null, null);
+
+        try {
+            PluginConfig::fromConfigure()->serverConfig();
+            $this->fail('Expected an exception.');
+        } catch (InvalidArgumentException $e) {
+            $this->assertStringContainsString('Security.salt', $e->getMessage());
+        }
+    }
+
+    public function testShortSaltIsFineWithAConfiguredSecret(): void
+    {
+        Security::setSalt('short');
+        Configure::write('OAuthServer.secret', str_repeat('k', 32));
+
+        $this->assertSame(str_repeat('k', 32), PluginConfig::fromConfigure()->serverConfig()->secret);
+    }
+
+    public function testServerConfigIsBuiltOnce(): void
+    {
+        $config = PluginConfig::fromConfigure();
+
+        $this->assertSame($config->serverConfig(), $config->serverConfig());
+    }
+
+    public function testServicesAreValidated(): void
+    {
+        $clock = new class implements ClockInterface {
+            public function now(): DateTimeImmutable
+            {
+                return new DateTimeImmutable();
+            }
+        };
+
+        $this->assertSame(['clock' => $clock], (new PluginConfig(['services' => ['clock' => $clock]]))->services());
+
+        try {
+            (new PluginConfig(['services' => ['clock' => new stdClass()]]))->services();
+            $this->fail('Expected an exception.');
+        } catch (InvalidArgumentException $e) {
+            $this->assertStringContainsString('OAuthServer.services.clock', $e->getMessage());
+        }
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('OAuthServer.services.cache');
+        (new PluginConfig(['services' => ['cache' => $clock]]))->services();
+    }
+
+    public function testLayoutsMustBeNamesFalseOrNull(): void
+    {
+        $this->assertSame('app', (new PluginConfig(['consent' => ['layout' => 'app']]))->consentLayout());
+        $this->assertNull((new PluginConfig([]))->consentLayout());
+
+        try {
+            (new PluginConfig(['consent' => ['layout' => true]]))->consentLayout();
+            $this->fail('Expected an exception.');
+        } catch (InvalidArgumentException $e) {
+            $this->assertStringContainsString('OAuthServer.consent.layout', $e->getMessage());
+        }
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('OAuthServer.connections.layout');
+        (new PluginConfig(['connections' => ['layout' => 1]]))->connectionsLayout();
+    }
+
+    public function testCimdRateLimitPassesThroughToTheCore(): void
+    {
+        $config = new PluginConfig([
+            'resources' => ['https://example.com/mcp' => ['scopes' => ['a' => 'A']]],
+            'issuer' => 'https://example.com',
+            'rateLimit' => ['cache' => null, 'cimd' => [3, 30]],
+        ]);
+
+        $this->assertSame([3, 30], $config->serverConfig()->rateLimits['cimd']);
+    }
+
+    public function testUnknownLoginAndConsentSettingsThrow(): void
+    {
+        try {
+            (new PluginConfig(['login' => ['ulr' => '/x']]))->login();
+            $this->fail('Expected an exception.');
+        } catch (InvalidArgumentException $e) {
+            $this->assertStringContainsString('login.ulr', $e->getMessage());
+        }
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('consent.layuot');
+        (new PluginConfig(['consent' => ['layuot' => 'x']]))->consentLayout();
+    }
+
+    public function testNonCallableSettingsNameTheKey(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('OAuthServer.userProvider.forClient');
+        (new PluginConfig(['userProvider' => ['forClient' => 'nope']]))->userProvider();
     }
 }

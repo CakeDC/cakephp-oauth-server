@@ -4,11 +4,15 @@ declare(strict_types=1);
 namespace CakeDC\OAuthServer\Config;
 
 use Cake\Core\Configure;
+use Cake\Core\Exception\CakeException;
 use Cake\Utility\Security;
+use CakeDC\OAuth\Server\Client\Cimd\DnsResolverInterface;
+use CakeDC\OAuth\Server\Client\Cimd\HttpTransportInterface;
 use CakeDC\OAuth\Server\Config\ServerConfig;
 use CakeDC\OAuth\Server\Resource\ResourceIdentifier;
 use CakeDC\OAuthServer\Identity\OrmUserProvider;
 use InvalidArgumentException;
+use Psr\Clock\ClockInterface;
 
 /**
  * The `OAuthServer` configuration: core settings for the server, plus the plugin's own.
@@ -22,6 +26,14 @@ final class PluginConfig
         'connections' => ['enabled', 'layout'],
         'services' => ['clock', 'transport', 'dns'],
     ];
+
+    private const SERVICE_TYPES = [
+        'clock' => ClockInterface::class,
+        'transport' => HttpTransportInterface::class,
+        'dns' => DnsResolverInterface::class,
+    ];
+
+    private ?ServerConfig $serverConfig = null;
 
     /**
      * @param array<string, mixed> $settings The `OAuthServer` configuration.
@@ -51,17 +63,84 @@ final class PluginConfig
      */
     public function serverConfig(): ServerConfig
     {
+        if ($this->serverConfig !== null) {
+            return $this->serverConfig;
+        }
         $core = array_diff_key($this->settings, self::PLUGIN_SECTIONS);
-        $core += [
-            'issuer' => ResourceIdentifier::canonicalize((string)Configure::read('App.fullBaseUrl')),
-            'secret' => hash('sha256', Security::getSalt() . '|cakedc-oauth-server'),
-        ];
+        $issuerConfigured = isset($core['issuer']);
+        if (!$issuerConfigured) {
+            $core['issuer'] = (string)Configure::read('App.fullBaseUrl');
+        }
+        if (!isset($core['secret'])) {
+            $core['secret'] = self::derivedSecret();
+        }
         if (isset($core['rateLimit']) && is_array($core['rateLimit'])) {
             unset($core['rateLimit']['cache']);
         }
         $core['connections'] = (bool)($this->section('connections')['enabled'] ?? true);
+        if (!$issuerConfigured) {
+            try {
+                $core['issuer'] = ResourceIdentifier::canonicalize($core['issuer']);
+            } catch (InvalidArgumentException $e) {
+                throw $this->issuerError($e, false);
+            }
+        }
 
-        return ServerConfig::fromArray($core);
+        try {
+            return $this->serverConfig = ServerConfig::fromArray($core);
+        } catch (InvalidArgumentException $e) {
+            if (str_contains($e->getMessage(), 'issuer') || str_contains($e->getMessage(), 'absolute URL')) {
+                throw $this->issuerError($e, $issuerConfigured);
+            }
+
+            throw $e;
+        }
+    }
+
+    /**
+     * An error that names the setting to fix.
+     *
+     * @param \InvalidArgumentException $previous The core's error.
+     * @param bool $configured Whether `OAuthServer.issuer` was set.
+     * @return \InvalidArgumentException
+     */
+    private function issuerError(InvalidArgumentException $previous, bool $configured): InvalidArgumentException
+    {
+        $setting = $configured ? 'OAuthServer.issuer' : 'App.fullBaseUrl (the default issuer)';
+
+        return new InvalidArgumentException(
+            sprintf(
+                'The OAuth issuer is invalid: %s Fix %s; it must be an absolute https URL '
+                . '(http is allowed on localhost only), or set OAuthServer.issuer.',
+                $previous->getMessage(),
+                $setting,
+            ),
+            0,
+            $previous,
+        );
+    }
+
+    /**
+     * The secret derived from the security salt.
+     *
+     * @return string
+     * @throws \InvalidArgumentException
+     */
+    private static function derivedSecret(): string
+    {
+        try {
+            $salt = Security::getSalt();
+        } catch (CakeException) {
+            $salt = '';
+        }
+        if (strlen($salt) < 32) {
+            throw new InvalidArgumentException(
+                'Security.salt is missing or shorter than 32 characters, so no safe OAuth secret can be derived '
+                . 'from it. Set a real Security.salt or set OAuthServer.secret.',
+            );
+        }
+
+        return hash('sha256', $salt . '|cakedc-oauth-server');
     }
 
     /**
@@ -108,7 +187,7 @@ final class PluginConfig
      */
     public function consentLayout(): string|false|null
     {
-        return self::layout($this->section('consent')['layout'] ?? null);
+        return self::layout($this->section('consent')['layout'] ?? null, 'consent');
     }
 
     /**
@@ -118,7 +197,7 @@ final class PluginConfig
      */
     public function connectionsLayout(): string|false|null
     {
-        return self::layout($this->section('connections')['layout'] ?? null);
+        return self::layout($this->section('connections')['layout'] ?? null, 'connections');
     }
 
     /**
@@ -143,7 +222,18 @@ final class PluginConfig
      */
     public function services(): array
     {
-        return array_filter($this->section('services'), 'is_object');
+        $services = [];
+        foreach ($this->section('services') as $key => $service) {
+            $type = self::SERVICE_TYPES[$key];
+            if (!$service instanceof $type) {
+                throw new InvalidArgumentException(
+                    sprintf('"OAuthServer.services.%s" must be an instance of %s.', $key, $type),
+                );
+            }
+            $services[$key] = $service;
+        }
+
+        return $services;
     }
 
     /**
@@ -218,10 +308,18 @@ final class PluginConfig
      * A layout setting.
      *
      * @param mixed $value The raw setting.
+     * @param string $section Section name, for the error.
      * @return string|false|null
+     * @throws \InvalidArgumentException
      */
-    private static function layout(mixed $value): string|false|null
+    private static function layout(mixed $value, string $section): string|false|null
     {
-        return $value === false || $value === null ? $value : (string)$value;
+        if ($value !== null && $value !== false && !is_string($value)) {
+            throw new InvalidArgumentException(
+                sprintf('"OAuthServer.%s.layout" must be a layout name, false or null.', $section),
+            );
+        }
+
+        return $value;
     }
 }
