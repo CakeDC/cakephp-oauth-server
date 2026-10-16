@@ -67,10 +67,11 @@ final class PluginConfig
             return $this->serverConfig;
         }
         $core = array_diff_key($this->settings, self::PLUGIN_SECTIONS);
-        $issuerConfigured = isset($core['issuer']);
-        if (!$issuerConfigured) {
-            $core['issuer'] = (string)Configure::read('App.fullBaseUrl');
-        }
+        $configured = isset($core['issuer']);
+        $core['issuer'] = $this->checkedIssuer(
+            $configured ? $core['issuer'] : Configure::read('App.fullBaseUrl'),
+            $configured,
+        );
         if (!isset($core['secret'])) {
             $core['secret'] = self::derivedSecret();
         }
@@ -78,45 +79,61 @@ final class PluginConfig
             unset($core['rateLimit']['cache']);
         }
         $core['connections'] = (bool)($this->section('connections')['enabled'] ?? true);
-        if (!$issuerConfigured) {
-            try {
-                $core['issuer'] = ResourceIdentifier::canonicalize($core['issuer']);
-            } catch (InvalidArgumentException $e) {
-                throw $this->issuerError($e, false);
-            }
-        }
 
+        return $this->serverConfig = ServerConfig::fromArray($core);
+    }
+
+    /**
+     * The canonical issuer, or an error that names the setting to fix.
+     *
+     * @param mixed $issuer The raw issuer.
+     * @param bool $configured Whether `OAuthServer.issuer` was set.
+     * @return string
+     * @throws \InvalidArgumentException
+     */
+    private function checkedIssuer(mixed $issuer, bool $configured): string
+    {
+        $raw = is_string($issuer) ? $issuer : '';
         try {
-            return $this->serverConfig = ServerConfig::fromArray($core);
-        } catch (InvalidArgumentException $e) {
-            if (str_contains($e->getMessage(), 'issuer') || str_contains($e->getMessage(), 'absolute URL')) {
-                throw $this->issuerError($e, $issuerConfigured);
+            $canonical = ResourceIdentifier::canonicalize($raw);
+            if (parse_url($canonical, PHP_URL_QUERY) !== null) {
+                throw new InvalidArgumentException('The issuer must not have a query.');
             }
+            ResourceIdentifier::assertSecure($canonical, 'issuer');
 
-            throw $e;
+            return $canonical;
+        } catch (InvalidArgumentException $e) {
+            throw $this->issuerError($e, $raw, $configured);
         }
     }
 
     /**
-     * An error that names the setting to fix.
+     * An error that names the setting to fix, without credentials.
      *
      * @param \InvalidArgumentException $previous The core's error.
+     * @param string $raw The issuer as configured.
      * @param bool $configured Whether `OAuthServer.issuer` was set.
      * @return \InvalidArgumentException
      */
-    private function issuerError(InvalidArgumentException $previous, bool $configured): InvalidArgumentException
-    {
+    private function issuerError(
+        InvalidArgumentException $previous,
+        string $raw,
+        bool $configured,
+    ): InvalidArgumentException {
+        $safe = (string)preg_replace('#^([a-z][a-z0-9+.-]*://)[^/?\#]*@#i', '$1', $raw);
+        $message = $safe === $raw ? $previous->getMessage() : str_replace($raw, $safe, $previous->getMessage());
         $setting = $configured ? 'OAuthServer.issuer' : 'App.fullBaseUrl (the default issuer)';
 
         return new InvalidArgumentException(
             sprintf(
                 'The OAuth issuer is invalid: %s Fix %s; it must be an absolute https URL '
                 . '(http is allowed on localhost only), or set OAuthServer.issuer.',
-                $previous->getMessage(),
+                $message,
                 $setting,
             ),
             0,
-            $previous,
+            // The core's exception carries the raw issuer, so it is only chained when it has no credentials.
+            $safe === $raw ? $previous : null,
         );
     }
 

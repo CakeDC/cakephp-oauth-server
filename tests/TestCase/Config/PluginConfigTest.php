@@ -283,4 +283,41 @@ class PluginConfigTest extends TestCase
         $this->expectExceptionMessage('OAuthServer.userProvider.forClient');
         (new PluginConfig(['userProvider' => ['forClient' => 'nope']]))->userProvider();
     }
+
+    public function testBadResourceKeyKeepsTheCoreMessage(): void
+    {
+        $config = new PluginConfig(['resources' => ['mcp' => ['scopes' => ['a' => 'A']]]]);
+
+        try {
+            $config->serverConfig();
+            $this->fail('Expected an exception.');
+        } catch (InvalidArgumentException $e) {
+            $this->assertStringContainsString('"mcp" is not an absolute URL', $e->getMessage());
+            $this->assertStringNotContainsString('App.fullBaseUrl', $e->getMessage());
+            $this->assertStringNotContainsString('OAuth issuer', $e->getMessage());
+        }
+    }
+
+    public function testIssuerCredentialsAreNotLeaked(): void
+    {
+        foreach (['issuer' => 'https://user:hunter2@example.com', 'base' => 'https://user:hunter2@example.com'] as $kind => $url) {
+            if ($kind === 'issuer') {
+                Configure::write('OAuthServer.issuer', $url);
+            } else {
+                Configure::delete('OAuthServer.issuer');
+                Configure::write('App.fullBaseUrl', $url);
+            }
+            try {
+                PluginConfig::fromConfigure()->serverConfig();
+                $this->fail('Expected an exception.');
+            } catch (InvalidArgumentException $e) {
+                $this->assertStringNotContainsString('hunter2', $e->getMessage());
+                $this->assertStringContainsString('credentials', $e->getMessage());
+                $this->assertStringContainsString('https://example.com', $e->getMessage());
+                for ($previous = $e->getPrevious(); $previous !== null; $previous = $previous->getPrevious()) {
+                    $this->assertStringNotContainsString('hunter2', $previous->getMessage());
+                }
+            }
+        }
+    }
 }
