@@ -78,6 +78,7 @@ class Application extends BaseApplication implements
     {
         $service = new AuthenticationService();
         $service->loadAuthenticator('Authentication.Session', ['sessionKey' => 'Auth']);
+        $service->loadAuthenticator('CakeDC/OAuthServer.Token', ['resource' => 'http://localhost/api']);
 
         return $service;
     }

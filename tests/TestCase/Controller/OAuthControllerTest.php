@@ -367,6 +367,8 @@ class OAuthControllerTest extends TestCase
         $this->configure([
             'personalTokens' => true,
             'resources' => [
+                // The test application's Token authenticator needs its resource declared.
+                'http://localhost/api' => ['name' => 'API', 'scopes' => ['api' => 'Use the API']],
                 'http://localhost/files' => [
                     'name' => 'Files',
                     'scopes' => ['files.read' => 'Read files', 'files.write' => 'Write files'],

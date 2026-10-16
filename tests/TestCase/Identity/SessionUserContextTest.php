@@ -10,12 +10,23 @@ use Authentication\Authenticator\HttpBasicAuthenticator;
 use Authentication\Authenticator\SessionAuthenticator;
 use Authentication\Identifier\IdentifierCollection;
 use Authentication\Identity;
+use Authorization\AuthorizationService;
+use Authorization\IdentityDecorator;
+use Authorization\Policy\MapResolver;
 use Cake\Http\ServerRequest;
 use Cake\Routing\Router;
 use Cake\TestSuite\TestCase;
+use CakeDC\OAuth\Server\Owner\ResourceOwner;
+use CakeDC\OAuth\Server\Owner\SubjectType;
+use CakeDC\OAuth\Server\Resource\ProtectedResource;
+use CakeDC\OAuth\Server\Token\Token;
+use CakeDC\OAuth\Server\Token\TokenType;
+use CakeDC\OAuth\Server\Token\ValidatedToken;
 use CakeDC\OAuthServer\Config\PluginConfig;
+use CakeDC\OAuthServer\Identity\OAuthIdentity;
 use CakeDC\OAuthServer\Identity\OrmUserProvider;
 use CakeDC\OAuthServer\Identity\SessionUserContext;
+use DateTimeImmutable;
 use Psr\Http\Message\ServerRequestInterface;
 
 class SessionUserContextTest extends TestCase
@@ -141,5 +152,21 @@ class SessionUserContextTest extends TestCase
         $response = $this->context('/login')->loginResponse(new ServerRequest(), '/oauth/authorize?a=b');
 
         $this->assertStringEndsWith('redirect=%2Foauth%2Fauthorize%3Fa%3Db', $response->getHeaderLine('Location'));
+    }
+
+    public function testAnOAuthIdentityIsNeverASignedInPerson(): void
+    {
+        $token = new ValidatedToken(
+            new Token('id', 'hash', TokenType::Access, 'f', null, '2', SubjectType::User, 'http://localhost/api', ['api'], new DateTimeImmutable()),
+            new ResourceOwner('2', 'Grace', null),
+            null,
+            new ProtectedResource('http://localhost/api', 'API', ['api' => 'Use the API']),
+            ['api'],
+        );
+        $oauth = new OAuthIdentity($token);
+        $decorated = new IdentityDecorator(new AuthorizationService(new MapResolver()), $oauth);
+
+        $this->assertNull($this->context()->currentOwner((new ServerRequest())->withAttribute('identity', $oauth)));
+        $this->assertNull($this->context()->currentOwner((new ServerRequest())->withAttribute('identity', $decorated)));
     }
 }
