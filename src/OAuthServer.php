@@ -264,7 +264,13 @@ final class OAuthServer
     {
         $login = $config->login()['url'];
         if (is_string($login)) {
-            return self::isAtPath($request, Router::url($login));
+            $url = Router::url($login);
+            if (self::isAtPath($request, $url)) {
+                return true;
+            }
+            $route = self::routeOf($url);
+
+            return $route !== null && self::isRoutedTo($request, $route);
         }
         if (isset($login['_name'])) {
             $route = Router::getRouteCollection()->named()[(string)$login['_name']] ?? null;
@@ -291,6 +297,40 @@ final class OAuthServer
         }
 
         return self::isAtPath($request, $url);
+    }
+
+    /**
+     * The action the router sends a GET or POST to the path of $url to, as a URL array, or null when the URL has no
+     * path on this site or no route matches it.
+     *
+     * @param string $url The URL, as Router::url() builds it.
+     * @return array<array-key, mixed>|null
+     */
+    private static function routeOf(string $url): ?array
+    {
+        $path = parse_url($url, PHP_URL_PATH);
+        if (!is_string($path) || $path === '') {
+            return null;
+        }
+        try {
+            $params = Router::getRouteCollection()->parseRequest(new ServerRequest([
+                'url' => $path,
+                'environment' => ['REQUEST_METHOD' => 'POST'],
+            ]));
+        } catch (Throwable) {
+            return null;
+        }
+        if (!is_string($params['controller'] ?? null)) {
+            return null;
+        }
+        $action = [
+            'plugin' => $params['plugin'] ?? false,
+            'prefix' => $params['prefix'] ?? false,
+            'controller' => $params['controller'],
+            'action' => $params['action'] ?? 'index',
+        ];
+
+        return $action + array_values(array_filter($params['pass'] ?? [], 'is_scalar'));
     }
 
     /**

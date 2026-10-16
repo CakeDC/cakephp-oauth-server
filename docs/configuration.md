@@ -193,7 +193,8 @@ it proves nothing. Set it when you changed the middleware's option:
 A value that is not a cookie name (an RFC 7230 token: letters, digits and ``!#$%&'*+-.^_`|~``) is an invalid
 setting like any other ([an invalid configuration](#an-invalid-configuration)); `csrfSkip()` then ignores no
 cookie. `SessionCsrfProtectionMiddleware` sets no such cookie, so the setting does not apply to it
-([installation](installation.md#csrf)).
+([installation](installation.md#csrf)). The session cookie's name (`Session.cookie`, else `session_name()`) is
+refused too: it would make session requests on the token paths count as having no credential.
 
 ### `services`
 

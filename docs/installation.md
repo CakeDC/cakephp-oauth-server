@@ -180,10 +180,15 @@ are session pages; variants such as a trailing slash or `%61uthorize` are the sa
 protection globally.
 
 The login page (`OAuthServer.login.url`) is never skipped, even when the token paths cover it. A string URL is
-the page at its path. A URL array (the default with cakedc/users) also covers every other route to the same
+the page at its path and every route to the action that path resolves to. A URL array (the default with cakedc/users) also covers every other route to the same
 action, such as `/Users/login` through the fallback routes: plugin, prefix, controller and action are compared,
 and the positional values when the array gives some. Give the login as an array when other routes reach its
 action.
+
+Hosts with their own bearer clients (JWT, API keys) on the resource routes: those requests used to be skipped
+by the previous build and now get CSRF's 403, because only this server's tokens are skipped. Keep skipping them
+in the callback with `OAuthServer::csrfSkip($request) || <your own condition>`. Clients still holding tokens of
+an old `tokenPrefix` get 403 rather than 401.
 
 Keep session pages out of your resources' paths. With `'tokenPaths' => ['/']` every route is on the routes of
 a resource, so every sign-in form is one: a request without a token or cookies skips the check everywhere except

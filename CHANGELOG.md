@@ -71,7 +71,8 @@ First release. An OAuth 2.1 authorization server for CakePHP 5 on top of cakedc/
   metadata, token, register, revoke and introspect endpoints; the application's error page on the consent and
   connections pages), a bearer token of this server gets 401 (a POST, PUT, PATCH or DELETE gets it, with
   cookies or without, while the resources, the issuer and `tokenPaths` can still be read; otherwise the CSRF
-  middleware answers 403 first), and each refusal logs the reason on the `oauth` scope. Any invalid setting counts, a wrong type included (a resource declared with a string used to break
+  middleware answers 403 first; with a `tokenPrefix` that is not a string, every bearer POST, PUT, PATCH or
+  DELETE gets that 403), and each refusal logs the reason on the `oauth` scope. Any invalid setting counts, a wrong type included (a resource declared with a string used to break
   `bin/cake` with a `TypeError`), and so do invalid `users` and `tokenPaths` values. `oauth check` reports it.
 - The Token authenticator reads no configuration when it is built: the resource, the paths and the server are
   resolved on the first request with a bearer token of this server's prefix, and a failure there (an undeclared
@@ -205,9 +206,20 @@ Found by the pre-release review and left for 1.0.0, not fixed in this beta:
 - `OAuthServer::csrfSkip()` skips CSRF for a bearer token of this server's prefix without validating it. One
   scenario stays open, and only on a misconfigured application: a page on another site makes a signed in
   browser send a made up bearer token with its session cookie. That needs your application to approve the
-  site's CORS preflight with credentials (which already gives the site everything CSRF protects), and the token
-  then runs as the session user only when a session, cookie or form authenticator comes before the Token
-  authenticator. `oauth check` fails on that order.
+  site's CORS preflight with credentials (which already gives the site everything CSRF protects). The request
+  then runs as the session user when a session can still run it: a stateful authenticator (session, cookie or
+  form) comes before the Token authenticator, there is no Token authenticator on a token path, the Token
+  authenticator reads a `header` other than `Authorization` (`csrfSkip()` only reads `Authorization`), or an
+  Environment authenticator comes first. `oauth check` fails on the order at every token path and warns on
+  another header.
+- Behaviour change for hosts with their own bearer clients (JWT, API keys) on the resource routes: a request
+  with a bearer token that is not this server's now gets CSRF's 403 where the previous build skipped it. Keep
+  skipping them with `OAuthServer::csrfSkip($request) || <your own condition>`. Clients that still hold tokens of
+  an old `tokenPrefix` get 403 rather than 401 until they sign in again.
+- `OAuthServer.csrfCookieName` cannot be the session cookie's name (`Session.cookie`, else `session_name()`): it
+  is an invalid setting. It would let session requests on the token paths skip CSRF.
+- A string `OAuthServer.login.url` is also matched by the route it resolves to, so aliases through fallback
+  routes (`/Pages/login`) are never skipped, like with a URL array.
 - From the core: concurrent refreshes with the same refresh token can revoke the whole family (the grace window
   absorbs a retry after a lost response, not parallel refreshes). Clients must send one refresh at a time per
   token.

@@ -420,7 +420,7 @@ final class PluginConfig
      * ambient credential.
      *
      * @return string
-     * @throws \InvalidArgumentException When it is not a cookie name.
+     * @throws \InvalidArgumentException When it is not a cookie name, or is the session cookie's.
      */
     public function csrfCookieName(): string
     {
@@ -430,6 +430,13 @@ final class PluginConfig
             throw new InvalidArgumentException(
                 '"OAuthServer.csrfCookieName" must be the name of the CSRF middleware\'s cookie '
                 . '(its cookieName option).',
+            );
+        }
+        $session = Configure::read('Session.cookie');
+        if ($name === (is_string($session) && $session !== '' ? $session : session_name())) {
+            throw new InvalidArgumentException(
+                '"OAuthServer.csrfCookieName" is the session cookie\'s name: a session request on the token paths '
+                . 'would count as having no credential and skip CSRF. Set it to the CSRF middleware\'s cookie.',
             );
         }
 

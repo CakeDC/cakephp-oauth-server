@@ -391,4 +391,25 @@ class PluginConfigTest extends TestCase
             }
         }
     }
+
+    public function testTheCsrfCookieNameCannotBeTheSessionCookie(): void
+    {
+        $previous = Configure::read('Session.cookie');
+        try {
+            foreach ([null, 'MYSESSION'] as $cookie) {
+                Configure::write('Session.cookie', $cookie);
+                $name = $cookie ?? session_name();
+                $config = new PluginConfig(['csrfCookieName' => $name]);
+                try {
+                    $config->validatePluginSettings();
+                    $this->fail('Refused: ' . $name);
+                } catch (InvalidArgumentException $e) {
+                    $this->assertStringContainsString('OAuthServer.csrfCookieName', $e->getMessage());
+                    $this->assertStringContainsString('session cookie', $e->getMessage());
+                }
+            }
+        } finally {
+            Configure::write('Session.cookie', $previous);
+        }
+    }
 }

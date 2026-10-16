@@ -750,76 +750,121 @@ class OAuthCheckCommand extends Command
      */
     private function authenticators(): array
     {
-        $chain = $this->authenticatorChain();
-        if (is_string($chain)) {
-            return ['warn', $chain];
+        $chains = $this->authenticatorChains();
+        if (is_string($chains)) {
+            return ['warn', $chains];
         }
-        [$names, $tokenAuthenticators] = $chain;
-        foreach ($tokenAuthenticators as $authenticator) {
-            try {
-                $authenticator->resolve();
-            } catch (Throwable $e) {
-                // It is built, but refuses every token of this server with 401.
-                return ['fail', 'the Token authenticator refuses every token: ' . $e->getMessage()];
-            }
-        }
-        $token = null;
-        $stateful = [];
-        foreach ($names as $position => $class) {
-            if ($token === null && is_a($class, TokenAuthenticator::class, true)) {
-                $token = $position;
-            }
-            foreach (self::STATEFUL_AUTHENTICATORS as $kind => $classes) {
-                foreach ($classes as $base) {
-                    if (is_a($class, $base, true)) {
-                        $stateful[$position] ??= $kind;
-                    }
-                }
-            }
-        }
-        if ($token === null) {
+        $withTokens = array_values(array_filter($chains, fn(array $chain): bool => $chain[2] !== []));
+        if ($withTokens === []) {
             return [
                 'warn',
                 'no Token authenticator (CakeDC/OAuthServer.Token) in the authentication service, so the tokens '
                 . 'issued here are not accepted by this application (fine when your resources live elsewhere)',
             ];
         }
-        foreach ($stateful as $position => $kind) {
-            if ($position < $token) {
-                return [
-                    'fail',
-                    sprintf(
-                        'the %s authenticator comes before the Token authenticator: a request with a bearer token of '
-                        . 'this server skips CSRF on the token paths, and with a %s it would run as the signed in '
-                        . 'person when the token is revoked or made up; load the Token authenticator first',
-                        $kind,
-                        self::STATEFUL_CREDENTIALS[$kind],
-                    ),
-                ];
+        foreach ($withTokens as [, , $tokenAuthenticators]) {
+            foreach ($tokenAuthenticators as $authenticator) {
+                try {
+                    $authenticator->resolve();
+                } catch (Throwable $e) {
+                    // It is built, but refuses every token of this server with 401.
+                    return ['fail', 'the Token authenticator refuses every token: ' . $e->getMessage()];
+                }
+            }
+        }
+        $kinds = [];
+        foreach ($withTokens as [$path, $names]) {
+            $token = null;
+            $stateful = [];
+            foreach ($names as $position => $class) {
+                if ($token === null && is_a($class, TokenAuthenticator::class, true)) {
+                    $token = $position;
+                }
+                foreach (self::STATEFUL_AUTHENTICATORS as $kind => $classes) {
+                    foreach ($classes as $base) {
+                        if (is_a($class, $base, true)) {
+                            $stateful[$position] ??= $kind;
+                        }
+                    }
+                }
+            }
+            foreach ($stateful as $position => $kind) {
+                if ($position < $token) {
+                    return [
+                        'fail',
+                        sprintf(
+                            'the %s authenticator comes before the Token authenticator at %s: a request with a '
+                            . 'bearer token of this server skips CSRF on the token paths, and with a %s it would '
+                            . 'run as the signed in person when the token is revoked or made up; load the Token '
+                            . 'authenticator first',
+                            $kind,
+                            $path,
+                            self::STATEFUL_CREDENTIALS[$kind],
+                        ),
+                    ];
+                }
+                $kinds[] = $kind;
+            }
+        }
+        foreach ($withTokens as [$path, , $tokenAuthenticators]) {
+            foreach ($tokenAuthenticators as $authenticator) {
+                $header = $authenticator->getConfig('header');
+                if ($header !== 'Authorization') {
+                    return [
+                        'warn',
+                        sprintf(
+                            'the Token authenticator at %s reads the %s header, but OAuthServer::csrfSkip() only '
+                            . 'looks at Authorization: a bearer token there is skipped by CSRF while this '
+                            . 'authenticator ignores it, and the session runs the request',
+                            $path,
+                            is_string($header) ? '"' . $header . '"' : 'a non-standard',
+                        ),
+                    ];
+                }
             }
         }
 
         return [
             'pass',
-            $stateful === []
+            $kinds === []
                 ? 'the Token authenticator is loaded'
-                : 'Token comes before ' . implode(', ', array_unique($stateful)),
+                : 'Token comes before ' . implode(', ', array_unique($kinds)),
         ];
     }
 
     /**
-     * The authenticator classes of the application's authentication service, in order, and its Token
-     * authenticators; or a reason why they cannot be told. Builds the service with a probe request, like the
-     * middleware does.
+     * The first authenticator chain with a Token authenticator, or the first one.
      *
      * @return array{0: list<class-string>, 1: list<\CakeDC\OAuthServer\Authenticator\TokenAuthenticator>}|string
      */
     private function authenticatorChain(): array|string
     {
+        $chains = $this->authenticatorChains();
+        if (is_string($chains)) {
+            return $chains;
+        }
+        foreach ($chains as $chain) {
+            if ($chain[2] !== []) {
+                return [$chain[1], $chain[2]];
+            }
+        }
+
+        return [$chains[0][1], $chains[0][2]];
+    }
+
+    /**
+     * The authenticator classes of the application's authentication service, in order, and its Token
+     * authenticators, for each bearer path probed; or a reason why they cannot be told. Builds the service with a
+     * probe request, like the middleware does.
+     *
+     * @return non-empty-list<array{0: string, 1: list<class-string>, 2: list<\CakeDC\OAuthServer\Authenticator\TokenAuthenticator>}>|string
+     */
+    private function authenticatorChains(): array|string
+    {
         $app = $this->application();
         if (!is_string($app) && $app instanceof AuthenticationServiceProviderInterface) {
             // Probe at the bearer paths: an app may load the Token authenticator for its API paths only.
-            $first = null;
+            $chains = [];
             foreach (PluginConfig::fromConfigure()->bearerPaths() ?: ['/'] as $probe) {
                 $service = $app->getAuthenticationService(new ServerRequest(['url' => $probe]));
                 if (!$service instanceof AuthenticationService) {
@@ -833,13 +878,10 @@ class OAuthCheckCommand extends Command
                         $tokens[] = $authenticator;
                     }
                 }
-                $first ??= [$classes, $tokens];
-                if ($tokens !== []) {
-                    return [$classes, $tokens];
-                }
+                $chains[] = [$probe, $classes, $tokens];
             }
-            if ($first !== null) {
-                return $first;
+            if ($chains !== []) {
+                return $chains;
             }
 
             return 'the authentication service is not an AuthenticationService; its authenticators were not inspected';
@@ -862,7 +904,7 @@ class OAuthCheckCommand extends Command
                 }
             }
 
-            return [$classes, $tokens];
+            return [['/', $classes, $tokens]];
         }
 
         return is_string($app)

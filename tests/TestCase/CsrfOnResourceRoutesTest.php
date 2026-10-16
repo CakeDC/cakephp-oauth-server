@@ -368,6 +368,7 @@ class CsrfOnResourceRoutesTest extends TestCase
                 ['controller' => 'Pages', 'action' => 'login', 'plugin' => null],
                 ['controller' => 'Pages', 'action' => 'login'],
                 ['_name' => 'login'],
+                '/login',
             ] as $login
         ) {
             Configure::write('OAuthServer.login.url', $login);

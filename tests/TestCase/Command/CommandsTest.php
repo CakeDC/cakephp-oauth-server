@@ -535,6 +535,43 @@ class CommandsTest extends TestCase
         }
     }
 
+    public function testCheckFailsWhenTheAuthenticatorOrderIsWrongAtAnyTokenPath(): void
+    {
+        // Token first at /mcp, Session first at /api: the first path alone would pass.
+        Configure::write('OAuthServer.tokenPaths', ['/mcp', '/api']);
+        try {
+            $output = $this->checkApplication('CakeDC\\OAuthServer\\Test\\Support\\CheckApp\\TwoPaths');
+        } finally {
+            OAuthServer::reset();
+        }
+
+        $this->assertStringContainsString(
+            '[FAIL] Authenticators: the Session authenticator comes before the Token authenticator at /api',
+            $output,
+        );
+    }
+
+    public function testCheckRefusesTheSessionCookieAsTheCsrfCookie(): void
+    {
+        Configure::write('OAuthServer.csrfCookieName', session_name());
+        try {
+            $this->exec('oauth check');
+        } finally {
+            Configure::delete('OAuthServer.csrfCookieName');
+        }
+
+        $this->assertOutputContains('[FAIL] Configuration');
+        $this->assertOutputContains('OAuthServer.csrfCookieName');
+    }
+
+    public function testCheckWarnsWhenTheTokenAuthenticatorReadsAnotherHeader(): void
+    {
+        $output = $this->checkApplication('CakeDC\\OAuthServer\\Test\\Support\\CheckApp\\TokenHeader');
+
+        $this->assertStringContainsString('[WARN] Authenticators: the Token authenticator at', $output);
+        $this->assertStringContainsString('reads the "X-Api-Token" header', $output);
+    }
+
     public function testCheckWarnsWhenThereIsNoTokenAuthenticator(): void
     {
         $output = $this->checkApplication('CakeDC\\OAuthServer\\Test\\Support\\CheckApp\\NoToken');

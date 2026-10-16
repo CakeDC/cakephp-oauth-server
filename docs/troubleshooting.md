@@ -28,10 +28,11 @@ credential at all ([installation](installation.md#csrf)). Check, in this order:
   route's template are below the resource's path (or `OAuthServer.tokenPaths`). A route that starts with a
   placeholder (`/{lang}/api/...`) is not; give it a static prefix (`/api/{lang}/...`);
 - `CsrfProtectionMiddleware` comes after `RoutingMiddleware`;
-- the request has no token, or a token that is not this server's (another server's, or a refresh token sent as
-  a bearer token), and carries a cookie other than the CSRF cookie: a session, a remember-me cookie, a load
-  balancer's sticky cookie (`AWSALB`). That request is CSRF checked. Send this server's access token, or keep
-  the client from sending those cookies. A token of this server that expired or was revoked is not the cause:
+- the request carries a token that is not this server's access token (another server's, or a refresh token sent
+  as a bearer token): it is CSRF checked whether or not it carries a cookie. A request with no token is CSRF
+  checked when it carries a cookie other than the CSRF cookie: a session, a remember-me cookie, a load
+  balancer's sticky cookie (`AWSALB`). Send this server's access token, or keep the client from sending those
+  cookies. A token of this server that expired or was revoked is not the cause:
   it gets the authenticator's 401 with `error="invalid_token"`, cookies or not;
 - you renamed the CSRF cookie (the middleware's `cookieName` option) but not `OAuthServer.csrfCookieName`, so
   the CSRF cookie a client with a cookie jar sends back counts as a credential
