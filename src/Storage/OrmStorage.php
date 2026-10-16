@@ -3,7 +3,9 @@ declare(strict_types=1);
 
 namespace CakeDC\OAuthServer\Storage;
 
+use Cake\Database\Exception\DatabaseException;
 use Cake\Datasource\EntityInterface;
+use Cake\ORM\Exception\PersistenceFailedException;
 use Cake\ORM\Locator\LocatorAwareTrait;
 use Cake\ORM\Table;
 use CakeDC\OAuth\Server\Client\ApplicationType;
@@ -22,6 +24,7 @@ use CakeDC\OAuth\Server\Token\TokenType;
 use DateTimeImmutable;
 use DateTimeInterface;
 use DateTimeZone;
+use PDOException;
 
 /**
  * The core storage on the plugin's ORM tables.
@@ -90,7 +93,7 @@ final class OrmStorage implements StorageInterface
             $data += ['id' => $client->id, 'created' => $client->createdAt, 'revoked_at' => $client->revokedAt];
         }
         $table->patchEntity($entity, $data, ['validate' => false, 'accessibleFields' => ['*' => true]]);
-        $table->saveOrFail($entity, ['atomic' => false]);
+        $table->saveOrFail($entity, ['atomic' => false, 'checkExisting' => false]);
         if ($exists && $client->revokedAt !== null) {
             $table->updateAll(
                 ['revoked_at' => $client->revokedAt],
@@ -139,7 +142,10 @@ final class OrmStorage implements StorageInterface
             'expires_at' => $code->expiresAt,
             'used_at' => $code->usedAt,
             'created' => $code->createdAt,
-        ], ['validate' => false, 'accessibleFields' => ['*' => true]]), ['atomic' => false]);
+        ], ['validate' => false, 'accessibleFields' => ['*' => true]]), [
+            'atomic' => false,
+            'checkExisting' => false,
+        ]);
     }
 
     /**
@@ -206,7 +212,10 @@ final class OrmStorage implements StorageInterface
             'family_started_at' => $token->familyStartedAt,
             'created' => $token->createdAt,
             'modified' => $token->createdAt,
-        ], ['validate' => false, 'accessibleFields' => ['*' => true]]), ['atomic' => false]);
+        ], ['validate' => false, 'accessibleFields' => ['*' => true]]), [
+            'atomic' => false,
+            'checkExisting' => false,
+        ]);
     }
 
     /**
@@ -342,26 +351,39 @@ final class OrmStorage implements StorageInterface
      */
     public function saveConsent(Consent $consent): void
     {
-        $existing = $this->findConsent($consent->subject, $consent->clientInternalId, $consent->resource);
         $table = $this->consents();
-        if ($existing !== null) {
-            $table->updateAll(
-                ['scopes' => $consent->scopes, 'modified' => $consent->modifiedAt],
-                ['id' => $existing->id],
-            );
+        if ($this->findConsent($consent->subject, $consent->clientInternalId, $consent->resource) === null) {
+            try {
+                $table->saveOrFail($table->newEntity([
+                    'id' => $consent->id,
+                    'subject' => $consent->subject,
+                    'oauth_client_id' => $consent->clientInternalId,
+                    'resource' => $consent->resource,
+                    'resource_hash' => hash('sha256', $consent->resource),
+                    'scopes' => $consent->scopes,
+                    'created' => $consent->createdAt,
+                    'modified' => $consent->modifiedAt,
+                ], ['validate' => false, 'accessibleFields' => ['*' => true]]), [
+                    'atomic' => false,
+                    'checkExisting' => false,
+                ]);
 
-            return;
+                return;
+            } catch (PersistenceFailedException | DatabaseException | PDOException $e) {
+                // A concurrent first approval inserted the row between the check and the insert: update it.
+                if (!$this->consentExists($consent)) {
+                    throw $e;
+                }
+            }
         }
-        $table->saveOrFail($table->newEntity([
-            'id' => $consent->id,
-            'subject' => $consent->subject,
-            'oauth_client_id' => $consent->clientInternalId,
-            'resource' => $consent->resource,
-            'resource_hash' => hash('sha256', $consent->resource),
-            'scopes' => $consent->scopes,
-            'created' => $consent->createdAt,
-            'modified' => $consent->modifiedAt,
-        ], ['validate' => false, 'accessibleFields' => ['*' => true]]), ['atomic' => false]);
+        $table->updateAll(
+            ['scopes' => $consent->scopes, 'modified' => $consent->modifiedAt],
+            [
+                'subject' => $consent->subject,
+                'oauth_client_id' => $consent->clientInternalId,
+                'resource_hash' => hash('sha256', $consent->resource),
+            ],
+        );
     }
 
     /**
@@ -427,6 +449,17 @@ final class OrmStorage implements StorageInterface
         }
 
         return new PruneResult($codes, $tokens, $clients);
+    }
+
+    /**
+     * Whether a consent for the same subject, client and resource is stored.
+     *
+     * @param \CakeDC\OAuth\Server\Grant\Consent $consent The consent.
+     * @return bool
+     */
+    private function consentExists(Consent $consent): bool
+    {
+        return $this->findConsent($consent->subject, $consent->clientInternalId, $consent->resource) !== null;
     }
 
     /**

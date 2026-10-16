@@ -17,6 +17,11 @@ class UtcDateTimeType extends DateTimeType
     public const NAME = 'oauth_datetime';
 
     /**
+     * Whether the type is registered already.
+     */
+    private static bool $mapped = false;
+
+    /**
      * @param string|null $name The type name.
      */
     public function __construct(?string $name = null)
@@ -34,7 +39,10 @@ class UtcDateTimeType extends DateTimeType
      */
     public static function apply(TableSchemaInterface $schema, array $columns): TableSchemaInterface
     {
-        TypeFactory::map(self::NAME, self::class);
+        if (!self::$mapped) {
+            TypeFactory::map(self::NAME, self::class);
+            self::$mapped = true;
+        }
         foreach ($columns as $column) {
             $schema->setColumnType($column, self::NAME);
         }
