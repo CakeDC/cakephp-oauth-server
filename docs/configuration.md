@@ -1,0 +1,231 @@
+# Configuration
+
+Everything lives under the `OAuthServer` key of `Configure`. Put it in `config/app_local.php` (or any file
+you load into `Configure`):
+
+```php
+return [
+    'OAuthServer' => [
+        // ... the keys on this page
+    ],
+];
+```
+
+The plugin reads the configuration through `CakeDC\OAuthServer\Config\PluginConfig`. Types are strict:
+numbers are integers (`3600`, not `'3600'`) and flags are `true` or `false`. An unknown key throws
+`InvalidArgumentException` that names it, so a typo is found at once.
+
+The keys come in two groups: **core keys**, handed to the core's `ServerConfig::fromArray()`, and
+**plugin keys**, which only the plugin reads.
+
+## Core keys
+
+These are documented in full in the core's
+[configuration](https://github.com/CakeDC/oauth-server/blob/1.x/docs/configuration.md). The summary:
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `issuer` | string | `App.fullBaseUrl` | Canonical URL of the server. https only (http on localhost). No query, no trailing slash |
+| `secret` | string | derived from `Security.salt` | At least 32 characters. Signs the consent and connections forms |
+| `resources` | array | required | The resources tokens are issued for: `name`, `scopes`, `implies`, `defaultScopes` |
+| `defaultResource` | string | first resource | Used when a client sends no `resource` |
+| `routePrefix` | string | `/oauth` | Path of the endpoints below the issuer |
+| `tokenPrefix` | string | `oauth` | Prefix of tokens (`<prefix>_at_...`); 1 to 16 lowercase letters or digits |
+| `lifetimes` | array | see below | `code`, `access`, `refresh`, `family`, `personalMax`, `refreshReuseGrace` |
+| `refreshTokens` | string | `always` | `always` or `offline_access` |
+| `registration` | array | see below | `mode`, `initialAccessToken`, `allowPrivateSchemes` |
+| `cimd` | array | see below | `enabled`, `allowedHosts`, `timeout`, `maxBytes`, `cacheMin`, `cacheMax` |
+| `clientCredentials` | bool | `true` | Enable the client credentials grant |
+| `introspection` | bool | `true` | Enable `/introspect` |
+| `personalTokens` | bool | `true` | Personal access tokens on the connections page |
+| `connections` | bool or array | `true` | The connections page. In the plugin also an array, see [connections](#connections) |
+| `rateLimit` | array | see below | Per endpoint limits, plus the plugin's `cache` key |
+| `retentionDays` | int | `7` | Days revoked and expired tokens are kept before `oauth prune` deletes them |
+
+Nested defaults: `lifetimes` `code` 60, `access` 3600, `refresh` 2592000, `family` 31536000, `personalMax`
+7776000, `refreshReuseGrace` 30 (all seconds). `registration` `mode` is `open`, `initialAccessToken`
+`null`, `allowPrivateSchemes` `true`. `cimd` `enabled` `true`, `allowedHosts` `null` (any host),
+`timeout` 5, `maxBytes` 10240, `cacheMin` 300, `cacheMax` 86400. `rateLimit` `authorize` `[30, 60]`,
+`token` `[60, 60]`, `register` `[10, 3600]`, `cimd` `[10, 60]` (each is `[requests, seconds]`).
+
+Behaviour behind these keys that is worth knowing before production:
+
+- **Refresh grace.** `lifetimes.refreshReuseGrace` lets a refresh token that was just rotated be presented
+  once more (a client whose response got lost). Clients must still serialize refreshes per token: two
+  processes refreshing the same token at once can trip reuse detection.
+- **Family cap.** `lifetimes.family` is a hard cap for a whole chain of refresh tokens. It is stored per
+  token (`family_started_at`), so it survives pruning.
+- **Personal tokens off.** Setting `personalTokens` to `false` stops every existing personal token at once.
+  They stay listed and can still be revoked.
+- **Scopes at use time.** Effective scopes are computed when a token is used, not only when it is issued.
+  Empty effective scopes mean no access. A refresh and a code exchange intersect the scopes with what the
+  person may hold today (`scopes` callback), so a demotion narrows the grant.
+- **`canAuthorize()` runs once.** It is asked at `/authorize`, not again afterwards. After a policy change,
+  revoke the affected tokens (see [users](users.md#cutting-a-person-off)).
+- **Introspection is a privilege.** A client with `allowIntrospection` can learn about any token of its
+  resource. Give it only to resource servers you trust.
+
+## Plugin keys
+
+### userProvider
+
+How people are found. See [users](users.md).
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `className` | string or `UserProviderInterface` | `CakeDC\OAuthServer\Identity\OrmUserProvider` | The provider. A class name is built with the settings array; an object is used as is |
+| `table` | string | `Users` (with `CakeDC/Users`: `Users.table`, else `CakeDC/Users.Users`) | ORM alias of the users table |
+| `finder` | string | `active` | Finder that must find the person. Inactive people are refused by it |
+| `displayField` | string or null | table display field (with `CakeDC/Users`: `username`) | Name shown on the consent page |
+| `canAuthorize` | callable or null | `null` (everyone) | `fn (IdentityInterface $identity, Client $client, ProtectedResource $resource): bool` |
+| `scopes` | callable or null | `null` (no extra limit) | `fn (IdentityInterface $identity, ProtectedResource $resource): ?array` |
+| `forClient` | callable or null | `null` (no service identity) | `fn (Client $client, ProtectedResource $resource): mixed` |
+
+### login
+
+Where anonymous people sign in.
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `url` | string or array | `/login` (with `CakeDC/Users`: its login route) | Login page, as for `Router::url()` |
+| `redirectParam` | string | `redirect` | Query parameter the login reads the return URL from |
+| `identityAttribute` | string | `identity` | Request attribute holding the identity, when the request has no authentication service |
+
+### consent
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `layout` | string, false or null | `null` | Layout of the consent and error pages. `null` is the plugin's `CakeDC/OAuthServer.oauth`, `false` renders the template alone, a string is your layout |
+
+### connections
+
+`OAuthServer.connections` is `true` or `false` (enable or disable the page, like in the core), or an array:
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `enabled` | bool | `true` | The connections page; when `false` it answers 404 |
+| `layout` | string, false or null | `null` | Layout of the connections page, with the same meaning as `consent.layout` |
+
+```php
+'connections' => ['enabled' => true, 'layout' => 'default'],
+```
+
+### rateLimit
+
+Besides the core's per endpoint limits, the plugin reads `rateLimit.cache`:
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `cache` | string or null | `default` | Name of the Cake cache configuration that holds the counters. `null` turns the limits off |
+
+That one cache does more than rate limiting: it also keeps the per client address budget of metadata
+document fetches (`rateLimit.cimd`) and the 60 second memory of failed fetches. With `'cache' => null`
+all three are off. `oauth check` warns about it. Use a cache shared by all your PHP processes (Redis,
+Memcached, or file for a single server); an `Array` cache lives in one process and limits nothing in
+production.
+
+```php
+'rateLimit' => ['cache' => 'oauth', 'token' => [120, 60]],
+```
+
+### users
+
+Used only with `CakeDC/Users`.
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `users.resource` | string | the server's default resource | The resource the integration's token authenticator validates against |
+
+Without it the authenticator accepts tokens of the default resource on every application route, so scope
+checks are your job. See [cakedc-users](cakedc-users.md).
+
+### services
+
+Advanced. Replacement services, used by the plugin's own tests. Each value must be an instance of the
+named interface or `InvalidArgumentException` is thrown.
+
+| Key | Interface |
+| --- | --- |
+| `clock` | `Psr\Clock\ClockInterface` |
+| `transport` | `CakeDC\OAuth\Server\Client\Cimd\HttpTransportInterface` |
+| `dns` | `CakeDC\OAuth\Server\Client\Cimd\DnsResolverInterface` |
+
+## How defaults are computed
+
+- **issuer.** `OAuthServer.issuer`, or else `App.fullBaseUrl`. The core canonicalizes it (lowercase
+  scheme and host, no default port, no trailing slash) and refuses a query and plain http except on
+  localhost. A wrong value fails with a message naming the setting to fix (`OAuthServer.issuer` or
+  `App.fullBaseUrl (the default issuer)`).
+- **secret.** `OAuthServer.secret`, or else `hash('sha256', Security.salt . '|cakedc-oauth-server')`. A salt
+  shorter than 32 characters is refused. Set `OAuthServer.secret` when you want to rotate it without
+  changing the salt.
+- **table, displayField, login.url.** Taken from `CakeDC/Users` when it is loaded, see
+  [cakedc-users](cakedc-users.md).
+- **Routing.** The route prefix and the metadata path are computed by the core, without touching the
+  secret, so a missing salt cannot break routing.
+
+## A complete example
+
+```php
+// config/app_local.php
+use Authentication\IdentityInterface;
+use CakeDC\OAuth\Server\Client\Client;
+use CakeDC\OAuth\Server\Resource\ProtectedResource;
+
+return [
+    'OAuthServer' => [
+        'issuer' => 'https://example.com',
+        'secret' => env('OAUTH_SERVER_SECRET'),
+        'tokenPrefix' => 'example',
+        'resources' => [
+            'https://example.com/mcp' => [
+                'name' => 'Example MCP',
+                'scopes' => [
+                    'content:read' => 'Read your posts',
+                    'content:write' => 'Edit drafts',
+                    'content:publish' => 'Publish posts',
+                ],
+                'implies' => [
+                    'content:publish' => ['content:write'],
+                    'content:write' => ['content:read'],
+                ],
+                'defaultScopes' => ['content:read'],
+            ],
+        ],
+        'lifetimes' => ['access' => 1800, 'personalMax' => 2592000],
+        'refreshTokens' => 'offline_access',
+        'registration' => ['mode' => 'open', 'allowPrivateSchemes' => true],
+        'cimd' => ['enabled' => true, 'allowedHosts' => null],
+        'rateLimit' => ['cache' => 'oauth', 'token' => [120, 60]],
+        'retentionDays' => 14,
+        'userProvider' => [
+            'table' => 'Users',
+            'finder' => 'active',
+            'displayField' => 'email',
+            'canAuthorize' => fn (IdentityInterface $user, Client $client, ProtectedResource $resource): bool => (bool)$user['is_editor'],
+            'scopes' => fn (IdentityInterface $user, ProtectedResource $resource): ?array => $user['is_admin']
+                ? null
+                : ['content:read', 'content:write'],
+        ],
+        'login' => [
+            'url' => ['controller' => 'Users', 'action' => 'login', 'plugin' => null],
+            'redirectParam' => 'redirect',
+        ],
+        'consent' => ['layout' => 'oauth'],
+        'connections' => ['enabled' => true, 'layout' => 'oauth'],
+    ],
+];
+```
+
+The `oauth` cache used above is an ordinary Cake cache configuration:
+
+```php
+// config/app.php (or app_local.php)
+'Cache' => [
+    'oauth' => [
+        'className' => 'Cake\Cache\Engine\RedisEngine',
+        'prefix' => 'oauth_',
+        'duration' => '+1 hour',
+    ],
+],
+```

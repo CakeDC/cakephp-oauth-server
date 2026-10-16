@@ -1,0 +1,174 @@
+# Installation
+
+## Composer
+
+```bash
+composer require cakedc/cakephp-oauth-server
+```
+
+This also installs the core library `cakedc/oauth-server`. The plugin needs PHP 8.2+, CakePHP 5.0+,
+`cakephp/authentication` 3.x and `cakephp/migrations` 4 or 5.
+
+## Load the plugin
+
+```php
+// src/Application.php
+public function bootstrap(): void
+{
+    parent::bootstrap();
+    $this->addPlugin('CakeDC/OAuthServer');
+}
+```
+
+Loading the plugin does four things: it connects the routes (see [Routes](#routes)), registers the
+`oauth` commands, registers a log file for the `oauth` log scope when no engine handles it (see
+[security](security.md#logging)), and, if `CakeDC/Users` is loaded, applies the
+[cakedc/users integration](cakedc-users.md). Load `CakeDC/Users` before this plugin.
+
+A broken configuration (an invalid issuer or route prefix) fails at boot on web requests with an error
+that names the setting. On the command line the routes fall back to `/oauth` so `bin/cake` keeps working
+and `bin/cake oauth check` reports the problem.
+
+## Migrations
+
+```bash
+bin/cake migrations migrate -p CakeDC/OAuthServer
+```
+
+The migration creates `oauth_clients`, `oauth_authorization_codes`, `oauth_tokens` and `oauth_consents`
+with the same shape as the core's `schema/*.sql`: ids are `CHAR(36)`, `oauth_tokens` has
+`family_started_at`, and on MySQL and MariaDB the tables use `utf8mb4_bin` so subjects compare case
+sensitively. See [deployment](deployment.md#database).
+
+If all of your application's migrations live in `config/Migrations/`, copy the plugin's file
+(`config/Migrations/20261016120000_CreateOAuthServerTables.php`) there unchanged and run
+`bin/cake migrations migrate` as usual. Do not run both. Later schema changes ship as new migration
+files in the plugin; copy them the same way, and run `bin/cake oauth check`, which tells you when a table
+is out of date.
+
+## CSRF
+
+OAuth clients call `/oauth/token`, `/oauth/register`, `/oauth/revoke` and `/oauth/introspect` from
+outside your site, so they cannot send a CSRF token. Let them through with `OAuthServer::csrfSkip()`,
+and keep CSRF protection everywhere else (including the consent and connections forms):
+
+```php
+// src/Application.php
+use Cake\Http\Middleware\CsrfProtectionMiddleware;
+use Cake\Http\MiddlewareQueue;
+use CakeDC\OAuthServer\OAuthServer;
+use Psr\Http\Message\ServerRequestInterface;
+
+public function middleware(MiddlewareQueue $middlewareQueue): MiddlewareQueue
+{
+    $csrf = new CsrfProtectionMiddleware(['httponly' => true]);
+    $csrf->skipCheckCallback(fn (ServerRequestInterface $request): bool => OAuthServer::csrfSkip($request));
+
+    return $middlewareQueue
+        ->add(new ErrorHandlerMiddleware(Configure::read('Error'), $this))
+        ->add(new AssetMiddleware(['cacheTime' => Configure::read('Asset.cacheTime')]))
+        ->add(new RoutingMiddleware($this))
+        ->add(new BodyParserMiddleware())
+        ->add($csrf)
+        ->add(new AuthenticationMiddleware($this));
+}
+```
+
+`csrfSkip()` compares the request path with the route prefix (`/oauth` by default) plus `token`,
+`register`, `revoke` or `introspect`. The authorize and connections endpoints are not skipped.
+
+A global `CsrfProtectionMiddleware` also sets a `csrfToken` cookie on the metadata response, which is
+publicly cacheable. Either scope CSRF away from `/.well-known` or accept the cookie.
+
+`bin/cake oauth check` inspects your middleware and fails when the callback does not skip the token
+endpoint.
+
+## Routes
+
+The plugin connects these routes in its own `routes()`, so you add nothing to `config/routes.php`:
+
+| Route | Action |
+| --- | --- |
+| `/.well-known/oauth-authorization-server` (plus the issuer's path, if any) | `metadata` |
+| `<prefix>/authorize` | `authorize` |
+| `<prefix>/token` | `token` |
+| `<prefix>/register` | `register` |
+| `<prefix>/revoke` | `revoke` |
+| `<prefix>/introspect` | `introspect` |
+| `<prefix>/connections` | `connections` |
+
+`<prefix>` is `OAuthServer.routePrefix` (default `/oauth`). All of them go to
+`CakeDC\OAuthServer\Controller\OAuthController`. The paths come from the core's `ServerConfig`, so the
+metadata document always names URLs that exist. For an application in a subdirectory read
+[deployment](deployment.md#applications-in-a-subdirectory).
+
+## Authentication
+
+The consent and connections pages need a person who is signed in with a browser session. The plugin
+reads the identity from the request attribute of your `cakephp/authentication` setup (`identity` by
+default, or the attribute your authentication service reports).
+
+A minimal `getAuthenticationService()`, with a form login and the plugin's token authenticator for your
+API routes:
+
+```php
+// src/Application.php
+use Authentication\AuthenticationService;
+use Authentication\AuthenticationServiceInterface;
+use Authentication\AuthenticationServiceProviderInterface;
+use Authentication\Middleware\AuthenticationMiddleware;
+use Cake\Routing\Router;
+use Psr\Http\Message\ServerRequestInterface;
+
+class Application extends BaseApplication implements AuthenticationServiceProviderInterface
+{
+    public function getAuthenticationService(ServerRequestInterface $request): AuthenticationServiceInterface
+    {
+        $service = new AuthenticationService([
+            'unauthenticatedRedirect' => Router::url(['controller' => 'Users', 'action' => 'login']),
+            'queryParam' => 'redirect',
+        ]);
+
+        // The token first: a session cookie must not hide a revoked or foreign bearer token.
+        $service->loadAuthenticator('CakeDC/OAuthServer.Token');
+        $service->loadAuthenticator('Authentication.Session');
+        $service->loadAuthenticator('Authentication.Form', [
+            'fields' => ['username' => 'email', 'password' => 'password'],
+            'loginUrl' => Router::url(['controller' => 'Users', 'action' => 'login']),
+        ]);
+        $service->loadIdentifier('Authentication.Password', [
+            'fields' => ['username' => 'email', 'password' => 'password'],
+        ]);
+
+        return $service;
+    }
+}
+```
+
+Rules to know:
+
+- When an anonymous person reaches `/oauth/authorize`, the plugin redirects to `OAuthServer.login.url`
+  (default `/login`) with the return address in the `redirect` query parameter. Both are
+  [configurable](configuration.md#login). Your login action must send people back to that address after
+  signing in.
+- A bearer token is never a browser login. The consent and connections pages accept a session login only.
+  Stateless authenticators (Token, HttpBasic, JWT, ...) and impersonation are refused, so those requests
+  get the login page. An application that signs people in only with HTTP Basic needs a session login for
+  the consent page, otherwise people may loop between the login and the consent page.
+- Load `CakeDC/OAuthServer.Token` before the session authenticator. See
+  [protecting-apis](protecting-apis.md#authenticator-order).
+
+## Authorization
+
+If the application uses `cakephp/authorization` with `requireAuthorizationCheck`, nothing changes for the
+plugin: `OAuthController` marks its own requests as authorized (it calls `skipAuthorization()` when the
+request has an `authorization` attribute) and never for any other controller.
+
+## Check the installation
+
+```bash
+bin/cake oauth check
+```
+
+Run it after every configuration change and on every deployment. It is described in
+[commands](commands.md#oauth-check).
