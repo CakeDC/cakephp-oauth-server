@@ -121,18 +121,26 @@ class PruneLockTest extends TestCase
      */
     private function startWorker(string $url, DateTimeImmutable $now): array
     {
+        $support = dirname(__DIR__, 2) . '/Support/';
         $process = proc_open(
-            [PHP_BINARY, dirname(__DIR__, 2) . '/Support/prune-worker.php', $now->format(DATE_ATOM)],
+            // With a line on standard output before the worker's own, as a deprecation would print.
+            [
+                PHP_BINARY,
+                '-d',
+                'auto_prepend_file=' . $support . 'stdout-noise.php',
+                $support . 'prune-worker.php',
+                $now->format(DATE_ATOM),
+            ],
             [1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
             $pipes,
             null,
             ['OAUTH_PRUNE_DB_URL' => $url] + getenv(),
         );
         $this->assertIsResource($process);
-        $line = $this->readLine($pipes[1], 10.0);
+        [$line, $noise] = $this->readMarkedLine($pipes[1], 'connection: ', 10.0);
         if ($line === '') {
             proc_terminate($process);
-            $this->fail('The worker did not start: ' . stream_get_contents($pipes[2]));
+            $this->fail('The worker did not start: ' . $noise . stream_get_contents($pipes[2]));
         }
 
         return ['process' => $process, 'pipes' => $pipes, 'connection' => $line];
@@ -172,8 +180,8 @@ class PruneLockTest extends TestCase
      */
     private function finish(array $worker): array
     {
-        $line = $this->readLine($worker['pipes'][1], 15.0);
-        $errors = (string)stream_get_contents($worker['pipes'][2]);
+        [$line, $noise] = $this->readMarkedLine($worker['pipes'][1], 'result: ', 15.0);
+        $errors = $noise . (string)stream_get_contents($worker['pipes'][2]);
         fclose($worker['pipes'][1]);
         fclose($worker['pipes'][2]);
         $exit = proc_close($worker['process']);
@@ -186,22 +194,31 @@ class PruneLockTest extends TestCase
     }
 
     /**
+     * The value of the first line that starts with $marker, and the other lines read before it.
+     *
      * @param resource $pipe The pipe.
+     * @param string $marker The start of the line.
      * @param float $timeout Seconds.
-     * @return string
+     * @return array{string, string} The value ('' when no such line came in time), and the other output.
      */
-    private function readLine($pipe, float $timeout): string
+    private function readMarkedLine($pipe, string $marker, float $timeout): array
     {
         $deadline = microtime(true) + $timeout;
         $line = '';
+        $noise = '';
         stream_set_blocking($pipe, false);
         while (microtime(true) < $deadline) {
             $chunk = fgets($pipe);
             if ($chunk !== false) {
                 $line .= $chunk;
                 if (str_ends_with($line, "\n")) {
-                    return trim($line);
+                    if (str_starts_with($line, $marker)) {
+                        return [trim(substr($line, strlen($marker))), $noise];
+                    }
+                    $noise .= $line;
+                    $line = '';
                 }
+                continue;
             }
             if (feof($pipe)) {
                 break;
@@ -209,6 +226,6 @@ class PruneLockTest extends TestCase
             usleep(10000);
         }
 
-        return trim($line);
+        return [str_starts_with($line, $marker) ? trim(substr($line, strlen($marker))) : '', $noise . $line];
     }
 }

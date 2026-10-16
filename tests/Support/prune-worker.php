@@ -3,13 +3,18 @@ declare(strict_types=1);
 
 /**
  * Runs OrmStorage::prune() in a process (and a database connection) of its own, for PruneLockTest. It prints its
- * connection id first, so the test can see when it waits on a lock, then the prune result. The database comes from
+ * connection id first (`connection: <id>`), so the test can see when it waits on a lock, then the prune result
+ * (`result: <json>`). The test reads the marked lines only: anything else on standard output (a deprecation that
+ * PHP prints before this script runs, for example) is not mistaken for them. The database comes from
  * OAUTH_PRUNE_DB_URL, the clock from the first argument.
  */
 
 use Cake\Database\Driver\Postgres;
 use Cake\Datasource\ConnectionManager;
 use CakeDC\OAuthServer\Storage\OrmStorage;
+
+// Errors and deprecations (CakePHP 5.1 on PHP 8.5 with the lowest dependencies prints some) go to stderr.
+ini_set('display_errors', 'stderr');
 
 require dirname(__DIR__, 2) . '/vendor/autoload.php';
 
@@ -23,11 +28,11 @@ ConnectionManager::setConfig('default', [
 /** @var \Cake\Database\Connection $connection */
 $connection = ConnectionManager::get('default');
 $id = $connection->getDriver() instanceof Postgres ? 'SELECT pg_backend_pid()' : 'SELECT CONNECTION_ID()';
-fwrite(STDOUT, (string)$connection->execute($id)->fetchColumn(0) . "\n");
+fwrite(STDOUT, 'connection: ' . (string)$connection->execute($id)->fetchColumn(0) . "\n");
 fflush(STDOUT);
 
 $result = (new OrmStorage())->prune(new DateTimeImmutable($argv[1] ?? 'now'), 7 * 86400, 30 * 86400);
-fwrite(STDOUT, (string)json_encode([
+fwrite(STDOUT, 'result: ' . (string)json_encode([
     'codes' => $result->codes,
     'tokens' => $result->tokens,
     'clients' => $result->clients,
