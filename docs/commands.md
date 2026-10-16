@@ -162,6 +162,7 @@ when any check fails, so it is suitable for a deployment pipeline.
 | Issuer | The issuer is invalid (fail). Warns for plain http, for an issuer with a path (the RFC 8414 document must be served at the host root), and when the issuer path differs from `App.base` |
 | Tables | A table is missing or `oauth_tokens` has no `family_started_at` (migrate; see [installation](installation.md#migrations)), or on MySQL and MariaDB a column is not `utf8mb4_bin` |
 | Users | The users table has no configured finder. A custom provider is reported as `custom user provider` |
+| Users integration | Only with `CakeDC/Users`: `OAuthServer.users` is invalid (fail); otherwise prints what the integration's Token authenticator validates and where |
 | Login URL | Prints the resolved login URL; fails when it cannot be built |
 | CSRF | The `CsrfProtectionMiddleware` of your application does not skip the token endpoint (fail). Warns when it cannot inspect the middleware |
 | RBAC | Only with `CakeDC/Users`: RBAC denies the OAuth endpoints (fail). See [cakedc-users](cakedc-users.md#what-oauth-check-says) |
@@ -170,5 +171,7 @@ when any check fails, so it is suitable for a deployment pipeline.
 | Logging | No log engine receives the `oauth` scope (warn) |
 
 On the command line an invalid issuer does not break `bin/cake`: the routes fall back to `/oauth` and the
-metadata route is skipped, so `oauth check` can report the problem. Web requests fail at boot instead.
+metadata route is skipped, so `oauth check` can report the problem. The same holds for an invalid
+`OAuthServer.users` setting with `CakeDC/Users`: the integration step is skipped on the command line.
+Web requests fail at boot instead.
 That also means a test of your application run on the CLI does not fail on a bad issuer.

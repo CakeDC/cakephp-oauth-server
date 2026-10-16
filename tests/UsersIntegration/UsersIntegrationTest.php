@@ -14,8 +14,11 @@ use CakeDC\OAuthServer\Config\PluginConfig;
 use CakeDC\OAuthServer\Integration\RbacPermissionsProvider;
 use CakeDC\OAuthServer\Integration\UsersIntegration;
 use CakeDC\OAuthServer\OAuthServer;
+use CakeDC\OAuthServer\OAuthServerPlugin;
 use CakeDC\OAuthServer\Test\Support\Html;
 use CakeDC\OAuthServer\TestSuite\OAuthTestTrait;
+use InvalidArgumentException;
+use UsersTestApp\Application;
 
 class UsersIntegrationTest extends TestCase
 {
@@ -378,5 +381,58 @@ class UsersIntegrationTest extends TestCase
             Configure::write('OAuthServer', $original);
             Configure::write('Auth.Authenticators.OAuthServerToken', $authenticator);
         }
+    }
+
+    private function pluginRunningOn(bool $cli): OAuthServerPlugin
+    {
+        return new class ($cli) extends OAuthServerPlugin {
+            public function __construct(private readonly bool $cli)
+            {
+                parent::__construct();
+            }
+
+            protected function isCli(): bool
+            {
+                return $this->cli;
+            }
+        };
+    }
+
+    public function testAnInvalidUsersSettingNeverBreaksTheCommandLine(): void
+    {
+        $authenticators = Configure::read('Auth.Authenticators');
+        $original = Configure::read('OAuthServer');
+        $app = new Application(CONFIG);
+        try {
+            foreach (['resource' => 5, 'paths' => 'api', 'typo' => true] as $key => $value) {
+                Configure::delete('Auth.Authenticators.OAuthServerToken');
+                Configure::write('OAuthServer.users', [$key => $value]);
+
+                // On the CLI the integration step is skipped.
+                $this->pluginRunningOn(true)->bootstrap($app);
+                $this->assertNull(Configure::read('Auth.Authenticators.OAuthServerToken'), $key);
+
+                $this->exec('oauth check');
+                $this->assertOutputContains('[FAIL] Users integration');
+
+                // On the web the error stays, and names the setting.
+                try {
+                    $this->pluginRunningOn(false)->bootstrap($app);
+                    $this->fail('The web must refuse ' . $key);
+                } catch (InvalidArgumentException $e) {
+                    $this->assertStringContainsString('OAuthServer.users', $e->getMessage());
+                }
+            }
+        } finally {
+            Configure::write('OAuthServer', $original);
+            Configure::write('Auth.Authenticators', $authenticators);
+        }
+    }
+
+    public function testCheckReportsTheUsersIntegration(): void
+    {
+        $this->exec('oauth check');
+
+        $this->assertOutputContains('[PASS] Users integration: the Token authenticator validates http://localhost/api below the path of its resource');
     }
 }

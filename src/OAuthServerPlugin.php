@@ -22,6 +22,7 @@ use CakeDC\OAuthServer\Command\OAuthTokenRevokeCommand;
 use CakeDC\OAuthServer\Config\PluginConfig;
 use CakeDC\OAuthServer\I18n\PluginMessagesLoader;
 use CakeDC\OAuthServer\Integration\UsersIntegration;
+use InvalidArgumentException;
 
 /**
  * An OAuth 2.1 authorization server for CakePHP applications.
@@ -37,7 +38,15 @@ class OAuthServerPlugin extends BasePlugin
         $this->registerLogEngine();
         PluginMessagesLoader::register();
         if (Plugin::isLoaded('CakeDC/Users')) {
-            UsersIntegration::apply();
+            try {
+                UsersIntegration::apply();
+            } catch (InvalidArgumentException $e) {
+                // Never break `bin/cake`: the integration step is skipped and `oauth check` reports the
+                // invalid setting. The web keeps the clear error.
+                if (!$this->isCli()) {
+                    throw $e;
+                }
+            }
         }
     }
 

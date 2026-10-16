@@ -107,6 +107,19 @@ class OAuthCheckCommand extends Command
                     ? ['pass', sprintf('%s with finder "%s"', $settings['table'], $settings['finder'])]
                     : ['fail', sprintf('%s has no finder "%s"', $settings['table'], $settings['finder'])];
             },
+            'Users integration' => function () use ($config): array {
+                if (!Plugin::isLoaded('CakeDC/Users')) {
+                    return ['pass', 'cakedc/users is not loaded'];
+                }
+                $paths = $config->usersPaths();
+                $resource = $config->usersResource();
+
+                return ['pass', sprintf(
+                    'the Token authenticator validates %s below %s',
+                    $resource ?? 'the default resource',
+                    $paths === null ? 'the path of its resource' : implode(', ', $paths),
+                )];
+            },
             'Login URL' => fn(): array => ['pass', Router::url($config->login()['url'])],
             'CSRF' => fn(): array => $this->csrf($config),
             'RBAC' => fn(): array => Plugin::isLoaded('CakeDC/Users')
