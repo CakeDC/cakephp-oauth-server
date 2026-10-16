@@ -368,6 +368,29 @@ class UsersIntegrationTest extends TestCase
         $this->assertResponseCode(401);
     }
 
+    public function testARevokedTokenPostedWithoutCookiesGetsTheChallengeAndWithACookieTheCsrfCheck(): void
+    {
+        $user = $this->createUser();
+        $token = $this->oauthTokenFor($user, [], 'http://localhost/api');
+        $this->exec('oauth token revoke --subject ' . $user->get('id'));
+        $this->assertExitSuccess();
+
+        // An API client: no cookie, so the integration's Token authenticator answers with its challenge.
+        $this->withOAuthToken($token);
+        $this->post('/api/me', ['x' => '1']);
+        $this->assertResponseCode(401);
+        $this->assertHeaderContains('WWW-Authenticate', 'error="invalid_token"');
+        $this->assertHeaderContains('WWW-Authenticate', 'The access token was revoked.');
+
+        // A browser with a session cookie: the CSRF check refuses it first.
+        $this->session(['Auth' => $user]);
+        $this->cookie((string)session_name(), 'a-browser-session');
+        $this->withOAuthToken($token);
+        $this->post('/api/me', ['x' => '1']);
+        $this->assertResponseCode(403);
+        $this->assertResponseContains('Missing or incorrect CSRF cookie type.');
+    }
+
     public function testASessionCookieWithAValidBearerTokenRunsAsTheTokenOwner(): void
     {
         $user = $this->createUser();
@@ -426,6 +449,7 @@ class UsersIntegrationTest extends TestCase
         $this->withOAuthToken($token);
         $this->post('/users/change-password', $form);
         $this->assertResponseCode(403);
+        $this->assertResponseContains('Missing or incorrect CSRF cookie type.');
         $this->withOAuthToken($token);
         $this->enableCsrfToken();
         $this->post('/users/change-password', $form);

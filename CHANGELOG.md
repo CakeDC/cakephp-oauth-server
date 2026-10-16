@@ -50,7 +50,9 @@ First release. An OAuth 2.1 authorization server for CakePHP 5 on top of cakedc/
   used or given a token after `oauth prune` selected it is kept with its token. `PruneLockTest` replays the race
   with two processes when `DB_URL` points at MySQL, MariaDB or PostgreSQL.
 - New migration `20261017120000_AddOAuthCodesSubjectIndex.php`: an index on `oauth_authorization_codes (subject)`,
-  as in the core's schema. Copy it like the first one; `oauth check` warns on the `Tables` line when it is missing.
+  as in the core's schema. Apply it the way you applied the first one: `bin/cake migrations migrate -p
+  CakeDC/OAuthServer`, or copy it into your application's `config/Migrations` and run `bin/cake migrations
+  migrate`. `oauth check` warns on the `Tables` line when it is missing, and its messages name both ways.
 - The connections page shows a connection's grant (its newest unrotated refresh token), so a down-scoped refresh
   no longer makes it show less; a refresh keeps the grant on the new refresh token and narrows only the access
   token (documented in configuration and users).
@@ -67,22 +69,32 @@ First release. An OAuth 2.1 authorization server for CakePHP 5 on top of cakedc/
   application's pages (the login included), `bin/cake` and migrations keep working, the plugin's routes are still
   connected (at the configured prefix and issuer when each is valid on its own) and answer 503 (JSON on the
   metadata, token, register, revoke and introspect endpoints; the application's error page on the consent and
-  connections pages), a bearer token of this server gets 401, and each refusal logs the reason on the `oauth`
-  scope. Any invalid setting counts, a wrong type included (a resource declared with a string used to break
+  connections pages), a bearer token of this server gets 401 (a POST, PUT, PATCH or DELETE gets it when
+  `csrfSkip()` lets the request through: without cookies, and only while the resources, the issuer and
+  `tokenPaths` can still be read; otherwise the CSRF middleware answers 403 first), and each refusal logs the
+  reason on the `oauth` scope. Any invalid setting counts, a wrong type included (a resource declared with a string used to break
   `bin/cake` with a `TypeError`), and so do invalid `users` and `tokenPaths` values. `oauth check` reports it.
 - The Token authenticator reads no configuration when it is built: the resource, the paths and the server are
   resolved on the first request with a bearer token of this server's prefix, and a failure there (an undeclared
   `resource`, a root resource without `paths`, an invalid `paths`, a broken configuration) refuses that token with
   401 and logs why, instead of throwing on every request. `TokenAuthenticator::resolve()` (internal) is what
   `oauth check` uses to report it.
-- `OAuthServer::csrfSkip()` skips CSRF for the client endpoints and for requests with a bearer token of this
-  server that validates (the core's validator, without recording a use) on the routes of its resource
-  (`OAuthServer.tokenPaths` or the `$paths` argument override the paths). A made up, expired or revoked token
-  with the right prefix gets the normal CSRF check, and a bearer request that was not routed yet is never
-  skipped. `csrfSkip()` never throws. The client endpoints are skipped with any configuration, a broken one
-  included, because they are found where the plugin connected them; only a bearer request within the token
-  paths builds the server, and when that fails (or the configuration cannot be read) the request is not skipped
-  and a warning goes to the `oauth` log, never the token.
+- `OAuthServer::csrfSkip()` skips CSRF for the client endpoints and, on the routes of a resource
+  (`OAuthServer.tokenPaths` or the `$paths` argument override the paths), for two kinds of request: one that
+  carries no cookie and no other credential a browser sends by itself (HTTP Basic or Digest credentials,
+  `REMOTE_USER`, an `Authorization` scheme other than `Bearer`), which leaves CSRF nothing to protect; and one
+  that carries a cookie and a bearer token of this server that validates (the core's validator, without
+  recording a use). So a client whose token expired, was revoked, belongs to another resource or to a
+  deactivated person gets the Token authenticator's 401 with `error="invalid_token"`, the signal to refresh or
+  to sign in again, instead of the CSRF middleware's 403 (MCP Streamable HTTP sends every message as a POST), and
+  the first POST of an MCP client, without a token, reaches the endpoint's own 401 with `resource_metadata`, so
+  discovery starts. With a cookie, a made up, expired or revoked token with the right prefix (or none) gets the
+  normal CSRF check. The consent and connections pages and the login page (`OAuthServer.login.url`) are never
+  skipped, and neither is a request that was not routed yet. `csrfSkip()` never throws. The client endpoints are
+  skipped with any configuration, a broken one included, because they are found where the plugin connected
+  them; only a request with a cookie and a bearer token within the token paths builds the server, and when that
+  fails (or the configuration cannot be read) the request is not skipped and a warning goes to the `oauth` log,
+  never the token.
 - The Token authenticator has a `paths` option (default: the path of its resource) and refuses, with 401, a
   request that carries this server's token anywhere else. Both the request path and the static part of the
   template of the route that matched it must be within `paths`, so a route that starts with a placeholder
@@ -109,8 +121,9 @@ First release. An OAuth 2.1 authorization server for CakePHP 5 on top of cakedc/
 - `oauth check` also warns about a missing CSRF middleware and a Session authenticator before the Token one,
   checks that a string login URL routes, and no longer accuses subdirectory installs of an `App.base` mismatch
   when the base is detected at runtime. It fails when the CSRF callback also skips session routes (it probes the
-  consent and connections pages, `/` and the login), recognises `SessionCsrfProtectionMiddleware`, warns when the
-  CSRF or authentication middleware runs before `RoutingMiddleware` (a new `Middleware` line), fails when another
+  consent and connections pages, `/` and the login), recognises `SessionCsrfProtectionMiddleware`, fails when the
+  CSRF or authentication middleware runs before `RoutingMiddleware` while a Token authenticator of this plugin is
+  loaded and warns when none is (a new `Middleware` line), fails when another
   route takes `<prefix>/token` (a new `Routes` line), warns when the rate limit cache is an `Array` or `Null`
   engine, fails when a Token authenticator would refuse every token, inspects the connection of the plugin's
   tables instead of `default`, and checks every column and unique key of the migration instead of one column.
@@ -128,6 +141,10 @@ First release. An OAuth 2.1 authorization server for CakePHP 5 on top of cakedc/
   no client, and application CSP middleware on the plugin's pages.
 - Deployment docs: set `OAuthServer.issuer` or `App.fullBaseUrl` explicitly; the skeleton otherwise fills it
   from the `Host` header.
+- Installation docs and README: while the plugin and the core are betas, install both with
+  `composer require cakedc/cakephp-oauth-server:^1.0@beta cakedc/oauth-server:^1.0@beta` (Composer reads
+  stability flags from the root package only), or set `"minimum-stability": "beta"` with `"prefer-stable": true`.
+- `docs/index.md` lists `QuotedName` in the public API.
 - Public API boundary: `PluginConfig`, `ServerFactory`, the template renderers, `UsersIntegration`,
   `PluginMessagesLoader`, `UtcDateTimeType`, `RbacPermissionsProvider`, the event dispatcher and the logger are
   `@internal`, as are `OAuthServer::pageCsp()` and `OAuthServer::forRequest()`.

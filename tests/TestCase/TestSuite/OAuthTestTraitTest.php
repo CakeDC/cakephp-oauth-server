@@ -70,14 +70,21 @@ class OAuthTestTraitTest extends TestCase
         $this->assertResponseContains('{"error":"unauthorized"}');
     }
 
-    public function testABearerPostSkipsCsrfAndAnyOtherPostDoesNot(): void
+    public function testABearerPostSkipsCsrfAndAPostWithASessionCookieDoesNot(): void
     {
         $this->actAsOAuth(1, [], 'http://localhost/api');
         $this->post('/api/me');
         $this->assertResponseOk();
 
+        // The header is gone: without a cookie either, the API action answers for itself.
+        $this->post('/api/me');
+        $this->assertResponseCode(401);
+        $this->assertResponseEquals('{"error":"unauthorized"}');
+
+        $this->cookie((string)session_name(), 'a-browser-session');
         $this->post('/api/me');
         $this->assertResponseCode(403);
+        $this->assertResponseContains('Missing or incorrect CSRF cookie type.');
     }
 
     public function testASecondTokenReplacesTheFirst(): void

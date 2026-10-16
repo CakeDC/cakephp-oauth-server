@@ -389,13 +389,40 @@ class CommandsTest extends TestCase
         );
     }
 
-    public function testCheckWarnsWhenCsrfOrAuthenticationRunsBeforeRouting(): void
+    public function testCheckFailsWhenCsrfOrAuthenticationRunsBeforeRoutingWithATokenAuthenticator(): void
     {
+        // Every token of this server is refused there.
         $output = $this->checkApplication('CakeDC\\OAuthServer\\Test\\Support\\CheckApp\\BeforeRouting');
+
+        $this->assertStringContainsString('[FAIL] Middleware', $output);
+        $this->assertStringContainsString('CsrfProtectionMiddleware runs before RoutingMiddleware', $output);
+        $this->assertStringContainsString('AuthenticationMiddleware runs before RoutingMiddleware', $output);
+        $this->assertStringContainsString('the Token authenticator is loaded, so no token of this server works', $output);
+    }
+
+    public function testCheckFailsWhenOnlyCsrfRunsBeforeRoutingWithATokenAuthenticator(): void
+    {
+        $output = $this->checkApplication('CakeDC\\OAuthServer\\Test\\Support\\CheckApp\\CsrfBeforeRouting');
+
+        $this->assertStringContainsString('[FAIL] Middleware', $output);
+        $this->assertStringContainsString('CsrfProtectionMiddleware runs before RoutingMiddleware', $output);
+        $this->assertStringNotContainsString('AuthenticationMiddleware runs before', $output);
+        $this->assertStringContainsString(
+            'every POST, PUT, PATCH or DELETE with a token of this server gets 403',
+            $output,
+        );
+    }
+
+    public function testCheckWarnsWhenCsrfOrAuthenticationRunsBeforeRoutingWithoutATokenAuthenticator(): void
+    {
+        $output = $this->checkApplication(
+            'CakeDC\\OAuthServer\\Test\\Support\\CheckApp\\BeforeRoutingWithoutToken',
+        );
 
         $this->assertStringContainsString('[WARN] Middleware', $output);
         $this->assertStringContainsString('CsrfProtectionMiddleware runs before RoutingMiddleware', $output);
         $this->assertStringContainsString('AuthenticationMiddleware runs before RoutingMiddleware', $output);
+        $this->assertStringNotContainsString('[FAIL] Middleware', $output);
     }
 
     public function testCheckPassesTheMiddlewareOrderAndTheRoutesOfTheTestApplication(): void
@@ -478,7 +505,11 @@ class CommandsTest extends TestCase
 
         $this->assertOutputContains('[WARN] Tables');
         $this->assertOutputContains('oauth_authorization_codes (subject)');
-        $this->assertOutputContains('20261017120000_AddOAuthCodesSubjectIndex');
+        $this->assertOutputContains(
+            'run bin/cake migrations migrate -p CakeDC/OAuthServer, or copy '
+            . 'config/Migrations/20261017120000_AddOAuthCodesSubjectIndex.php into the application\'s '
+            . 'config/Migrations and run bin/cake migrations migrate',
+        );
         $this->assertOutputNotContains('[FAIL] Tables');
     }
 
@@ -633,6 +664,10 @@ class CommandsTest extends TestCase
         $this->assertExitError();
         $this->assertOutputContains('[FAIL] Tables');
         $this->assertOutputContains('family_started_at');
+        $this->assertOutputContains(
+            'run bin/cake migrations migrate -p CakeDC/OAuthServer, or copy the current plugin migrations into the '
+            . 'application (config/Migrations) and run bin/cake migrations migrate',
+        );
     }
 
     public function testCheckReportsTheLoggingEngine(): void
@@ -653,7 +688,11 @@ class CommandsTest extends TestCase
         }
 
         $this->assertExitError();
-        $this->assertOutputContains('[FAIL] Tables: missing oauth_consents; copy the plugin migration');
+        // Both ways the installation documents: the plugin's migrations, or copies among the application's own.
+        $this->assertOutputContains(
+            '[FAIL] Tables: missing oauth_consents; run bin/cake migrations migrate -p CakeDC/OAuthServer, or copy '
+            . 'the plugin migrations into the application (config/Migrations) and run bin/cake migrations migrate',
+        );
     }
 
     public function testListShowsClientNamesLiterally(): void

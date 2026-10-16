@@ -18,17 +18,25 @@ $csrf->skipCheckCallback(fn (ServerRequestInterface $request): bool => OAuthServ
 skipCheckCallback`. If you changed `routePrefix`, `csrfSkip()` follows it. See
 [installation](installation.md#csrf).
 
-## 403 on a bearer POST to your API or MCP endpoint
+## 403 on a POST to your API or MCP endpoint
 
-The CSRF check refused a request that carries one of this server's tokens. `csrfSkip()` skips it only when
-all of this holds ([installation](installation.md#csrf)):
+The CSRF check refused a request on your API or MCP route. `csrfSkip()` skips such a request when it is on the
+routes of a resource and carries either no cookie or a cookie and a valid token of this server
+([installation](installation.md#csrf)). Check, in this order:
 
-- the token validates for one of your resources: an expired, revoked or made up token gets 403 here, before
-  the authenticator could answer 401;
 - the request is on the routes of that resource: the request path and the static part of the matched
   route's template are below the resource's path (or `OAuthServer.tokenPaths`). A route that starts with a
   placeholder (`/{lang}/api/...`) is not; give it a static prefix (`/api/{lang}/...`);
-- `CsrfProtectionMiddleware` comes after `RoutingMiddleware`.
+- `CsrfProtectionMiddleware` comes after `RoutingMiddleware`;
+- the client sends cookies (a browser, or an HTTP client with a cookie jar) with a token that does not
+  validate: expired, revoked, made up, for another resource, or none at all. With a cookie that request is CSRF
+  checked and gets 403 before the authenticator could answer 401; without cookies it gets the 401 with
+  `error="invalid_token"`. Refresh the token, or keep the client from sending your site's cookies;
+- the client sends HTTP Basic credentials or another `Authorization` scheme than `Bearer`, or your web server
+  authenticated the request (`REMOTE_USER`): browsers send those by themselves, so the check stays;
+- the route is your login page (`OAuthServer.login.url`) or the consent or connections page: never skipped;
+- the `OAuthServer` resources, issuer or `tokenPaths` are invalid: where a token works cannot be told, so only
+  the client endpoints are skipped. `bin/cake oauth check` names the setting.
 
 ## 403 when pressing Allow or Revoke
 
@@ -171,10 +179,10 @@ See the table in [commands](commands.md#oauth-check). The ones that most often f
 | --- | --- |
 | `Secret` | `OAuthServer.secret` shorter than 32 characters, or no usable `Security.salt` |
 | `Configuration` | An invalid `OAuthServer` setting; the message names it |
-| `Tables` | The migration was not run (`bin/cake migrations migrate -p CakeDC/OAuthServer`), or an old copy of it was (a missing column or unique key); copy the current file. The line names the connection of the plugin's tables, which is where it looks |
+| `Tables` | The migrations were not run (`bin/cake migrations migrate -p CakeDC/OAuthServer`, or copies among your application's migrations and `bin/cake migrations migrate`), or an old copy was (a missing column or unique key); copy the current files. The line names the connection of the plugin's tables, which is where it looks |
 | `Users` | The users table has no `active` finder; add `findActive()` or set `userProvider.finder` |
 | `Routes` | A route of your application connected before the plugin's takes `<prefix>/token` |
-| `Middleware` | `CsrfProtectionMiddleware` or `AuthenticationMiddleware` runs before `RoutingMiddleware`, where bearer requests cannot be told apart |
+| `Middleware` | `CsrfProtectionMiddleware` or `AuthenticationMiddleware` runs before `RoutingMiddleware`, where the routes of a resource cannot be told apart (it fails when a Token authenticator is loaded) |
 | `CSRF` | The skip callback is missing, it skips session pages too (a callback like `fn () => true`), or there is no CSRF middleware at all |
 | `Authenticators` | The Session authenticator is loaded before the Token one, there is no Token authenticator, or it refuses every token (an undeclared `resource`, a root resource without `paths`) |
 | `RBAC` | The bypass rule is missing |

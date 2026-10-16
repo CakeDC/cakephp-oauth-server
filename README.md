@@ -30,10 +30,12 @@ through.
 
 ## Five minute start
 
-1. Install the plugin.
+1. Install the plugin and the core. Both are betas: Composer reads stability flags only from your application's
+   `composer.json`, so name both (or set `"minimum-stability": "beta"` with `"prefer-stable": true`, see
+   [installation](docs/installation.md#composer)).
 
    ```bash
-   composer require cakedc/cakephp-oauth-server
+   composer require cakedc/cakephp-oauth-server:^1.0@beta cakedc/oauth-server:^1.0@beta
    ```
 
 2. Load it in `src/Application.php`.
@@ -73,7 +75,7 @@ through.
    ];
    ```
 
-5. Let OAuth clients call the token endpoints, and requests with a valid bearer token on your resources' routes, without a CSRF token. In `Application::middleware()`, after `RoutingMiddleware`:
+5. Let OAuth clients call the token endpoints, and API and MCP clients call your resources' routes, without a CSRF token (on those routes a request is skipped when it carries no cookie, or a cookie and a valid bearer token, see [installation](docs/installation.md#csrf)). In `Application::middleware()`, after `RoutingMiddleware`:
 
    ```php
    use CakeDC\OAuthServer\OAuthServer;

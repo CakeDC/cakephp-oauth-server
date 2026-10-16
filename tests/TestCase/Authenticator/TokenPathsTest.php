@@ -41,6 +41,24 @@ class TokenPathsTest extends TestCase
         parent::tearDown();
     }
 
+    /**
+     * A 403 from the CSRF middleware, not from anything else.
+     */
+    private function assertRefusedByCsrf(string $message = ''): void
+    {
+        $this->assertResponseCode(403, $message);
+        $this->assertResponseContains('Missing or incorrect CSRF cookie type.', $message);
+    }
+
+    /**
+     * Sends the session cookie of a signed in browser with the next request (IntegrationTestTrait's session()
+     * keeps the session data but sends no cookie).
+     */
+    private function withSessionCookie(): void
+    {
+        $this->cookie((string)session_name(), 'a-browser-session');
+    }
+
     public function testATokenForTheApiCannotPostToASessionRoute(): void
     {
         $this->actAsOAuth(1, ['api'], 'http://localhost/api');
@@ -60,7 +78,7 @@ class TokenPathsTest extends TestCase
 
         $this->post('/account/delete', ['anything' => 'x']);
 
-        $this->assertResponseCode(403);
+        $this->assertRefusedByCsrf();
         $this->assertNull(Configure::read('TestApp.accountDeleted'), 'The action must not run.');
     }
 
@@ -115,7 +133,7 @@ class TokenPathsTest extends TestCase
         // No CSRF token: the skip no longer applies, so the CSRF check refuses it first.
         $this->actAsOAuth(1, ['content:read'], 'http://localhost/mcp');
         $this->post('/mcp/account/delete', ['x' => '1']);
-        $this->assertResponseCode(403);
+        $this->assertRefusedByCsrf();
         $this->assertNull(Configure::read('TestApp.accountDeleted'), 'The action must not run.');
 
         // With a CSRF token: the authenticator refuses it, outside the resource's routes.
@@ -159,27 +177,29 @@ class TokenPathsTest extends TestCase
         $this->assertResponseContains('"id":1');
     }
 
-    public function testATokenWithTheServersPrefixThatDoesNotValidateGetsTheCsrfCheck(): void
+    public function testATokenWithTheServersPrefixThatDoesNotValidateGetsTheCsrfCheckWhenTheBrowserHasASession(): void
     {
         // The session comes first here, so the session would run the action if CSRF let the request through.
         Configure::write('TestApp.sessionFirst', true);
         Configure::write('OAuthServer.tokenPaths', ['/']);
         OAuthServer::reset();
         $this->session(['Auth' => ['id' => 1]]);
+        $this->withSessionCookie();
         $this->withOAuthToken('test_at_' . str_repeat('x', 43));
 
         $this->post('/account/delete', ['x' => '1']);
 
-        $this->assertResponseCode(403);
+        $this->assertRefusedByCsrf();
         $this->assertNull(Configure::read('TestApp.accountDeleted'), 'The action must not run.');
 
         // A revoked token is no better.
         $token = $this->oauthTokenFor(1, ['api'], 'http://localhost/api');
         $this->exec('oauth token revoke --subject 1');
         $this->session(['Auth' => ['id' => 1]]);
+        $this->withSessionCookie();
         $this->withOAuthToken($token);
         $this->post('/account/delete', ['x' => '1']);
-        $this->assertResponseCode(403);
+        $this->assertRefusedByCsrf();
         $this->assertNull(Configure::read('TestApp.accountDeleted'), 'The action must not run.');
     }
 
@@ -232,7 +252,7 @@ class TokenPathsTest extends TestCase
         foreach (['/oauth%2Ftoken', '/oauth%2Frevoke'] as $path) {
             $this->session(['Auth' => ['id' => 1]]);
             $this->post($path, ['x' => '1']);
-            $this->assertResponseCode(403, $path);
+            $this->assertRefusedByCsrf($path);
         }
     }
 
@@ -249,7 +269,7 @@ class TokenPathsTest extends TestCase
     public function testAnonymousRequestsOutsideThePathPassOn(): void
     {
         $this->post('/account/delete');
-        $this->assertResponseCode(403);
+        $this->assertRefusedByCsrf();
 
         $this->enableCsrfToken();
         $this->post('/account/delete');

@@ -361,7 +361,8 @@ class OAuthCheckCommand extends Command
             foreach (self::INDEXES[$name] ?? [] as [$indexColumns, $migration, $why]) {
                 if (!in_array($indexColumns, $covered, true)) {
                     $indexes[] = sprintf(
-                        'no index on %s (%s), %s; copy config/Migrations/%s.php into the application and run '
+                        'no index on %s (%s), %s; run bin/cake migrations migrate -p CakeDC/OAuthServer, or copy '
+                        . 'config/Migrations/%s.php into the application\'s config/Migrations and run '
                         . 'bin/cake migrations migrate',
                         $name,
                         implode(', ', $indexColumns),
@@ -371,16 +372,18 @@ class OAuthCheckCommand extends Command
                 }
             }
         }
-        $migrate = 'copy the plugin migration into the application (config/Migrations) and run '
-            . 'bin/cake migrations migrate';
+        // The two ways the installation documents; an application uses one of them, never both.
+        $migrate = 'run bin/cake migrations migrate -p CakeDC/OAuthServer, or copy the plugin migrations into the '
+            . 'application (config/Migrations) and run bin/cake migrations migrate';
         if ($missing !== []) {
             return ['fail', 'missing ' . implode(', ', $missing) . '; ' . $migrate . $where];
         }
         if ($columns !== []) {
             return [
                 'fail',
-                'missing columns ' . implode(', ', $columns) . '; copy the current plugin migrations into the '
-                . 'application and run bin/cake migrations migrate' . $where,
+                'missing columns ' . implode(', ', $columns) . '; run bin/cake migrations migrate -p '
+                . 'CakeDC/OAuthServer, or copy the current plugin migrations into the application '
+                . '(config/Migrations) and run bin/cake migrations migrate' . $where,
             ];
         }
         if ($unique !== []) {
@@ -545,8 +548,9 @@ class OAuthCheckCommand extends Command
 
     /**
      * Whether RoutingMiddleware runs before the CSRF and authentication middleware: before routing there is no
-     * matched route, so a bearer request is never skipped by csrfSkip() and the Token authenticator refuses every
-     * token of this server.
+     * matched route, so no request on a resource's routes is skipped by csrfSkip() and the Token authenticator
+     * refuses every token of this server. That fails when a Token authenticator is loaded (the application's own
+     * tokens cannot work) and warns otherwise.
      *
      * @return array{0: 'pass'|'warn'|'fail', 1: string}
      */
@@ -558,18 +562,32 @@ class OAuthCheckCommand extends Command
         }
         $routed = false;
         $early = [];
+        $authenticationEarly = false;
         foreach ($list as $middleware) {
             if ($middleware instanceof RoutingMiddleware) {
                 $routed = true;
             } elseif (!$routed && $middleware instanceof AuthenticationMiddleware) {
+                $authenticationEarly = true;
                 $early[] = 'AuthenticationMiddleware runs before RoutingMiddleware: the Token authenticator refuses '
                     . 'every token of this server there';
             } elseif (!$routed && self::isCsrf($middleware)) {
                 $early[] = (new ReflectionClass($middleware))->getShortName() . ' runs before RoutingMiddleware: '
-                    . 'a bearer request is never skipped there';
+                    . 'no request on a resource\'s routes is skipped there';
             }
         }
         if ($early !== []) {
+            $chain = $this->authenticatorChain();
+            if (is_array($chain) && $chain[1] !== []) {
+                return [
+                    'fail',
+                    implode('; ', $early) . '; the Token authenticator is loaded, so '
+                    . ($authenticationEarly
+                        ? 'no token of this server works'
+                        : 'every POST, PUT, PATCH or DELETE with a token of this server gets 403')
+                    . '; add RoutingMiddleware first',
+                ];
+            }
+
             return ['warn', implode('; ', $early) . '; add RoutingMiddleware first'];
         }
 

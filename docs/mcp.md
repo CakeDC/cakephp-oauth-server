@@ -75,12 +75,17 @@ under development, so check its documentation for the exact transport calls.
 The OAuth endpoints themselves (`/oauth/authorize`, `/oauth/token`, the metadata and so on) are routed by
 this plugin, next to your MCP endpoint.
 
-MCP clients POST to your endpoint with `Authorization: Bearer ...`. With `OAuthServer::csrfSkip()` in your
-`CsrfProtectionMiddleware` (see [installation](installation.md#csrf)) those POSTs are not rejected with 403,
-while CSRF stays on for session routes. The skip applies only to a token that validates, on the routes of
-your MCP resource (`/mcp` for `https://example.com/mcp`), and the Token authenticator likewise accepts the
-token only there: both the request path and the template of the route that matched it must start with
-`/mcp`. Connect your MCP endpoint with that static prefix, and the token cannot be used on routes of your
+MCP clients (Streamable HTTP) POST every message to your endpoint, the first one without a token and the next
+ones with `Authorization: Bearer ...`, and they send no cookies. With `OAuthServer::csrfSkip()` in your
+`CsrfProtectionMiddleware` (see [installation](installation.md#csrf)) those POSTs are not rejected with 403 on
+the routes of your MCP resource (`/mcp` for `https://example.com/mcp`), while CSRF stays on for session routes.
+The first POST, without a token, reaches your endpoint, whose 401 with
+`WWW-Authenticate: Bearer resource_metadata="..."` starts the client's discovery; a POST whose token expired or
+was revoked reaches the token check (the SDK's middleware, or the Token authenticator where one covers the
+route), whose 401 with `error="invalid_token"` makes the client refresh or sign in again. A request that does
+carry a cookie is skipped only with a token that validates. Both the skip and the Token authenticator apply
+only on the routes of the resource: both the request path and the template of the route that matched it must
+start with `/mcp`. Connect your MCP endpoint with that static prefix, and the token cannot be used on routes of your
 application that are not below it, including routes that start with a placeholder such as
 `/{tenant}/account/delete` ([where a token works](protecting-apis.md#where-a-token-works)). Never disable
 CSRF globally.

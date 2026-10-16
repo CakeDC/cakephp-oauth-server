@@ -6,6 +6,7 @@ namespace CakeDC\OAuthServer;
 use Cake\Http\ResponseFactory;
 use Cake\Http\ServerRequest;
 use Cake\Http\StreamFactory;
+use Cake\Routing\Router;
 use CakeDC\OAuth\Server\AuthorizationServer;
 use CakeDC\OAuth\Server\Http\HttpResponder;
 use CakeDC\OAuth\Server\Token\ValidatedToken;
@@ -60,30 +61,41 @@ final class OAuthServer
 
     /**
      * Whether $request needs no CSRF token: it goes to an endpoint OAuth clients call (token, register,
-     * revoke, introspect), or it carries a valid bearer token of this server where that token is accepted.
+     * revoke, introspect), or it is on the routes of a resource and carries either no credential a browser
+     * attaches by itself or a valid bearer token of this server.
      * Use it in CsrfProtectionMiddleware::skipCheckCallback(), with RoutingMiddleware before that middleware.
      *
-     * An Authorization header is not an ambient credential: a page on another site cannot make the browser
-     * attach a valid token. So a request skips the check for its bearer token only when all of this holds:
+     * CSRF protects ambient credentials: what a browser sends by itself when a page on another site posts to this
+     * one. An Authorization header with a bearer token is not one (no page can make the browser attach it). On the
+     * routes of a resource a request is therefore skipped when:
      *
-     * - the token has this server's access or personal prefix (`<prefix>_at_`, `<prefix>_pat_`) and validates
-     *   (the core's TokenValidator, without recording a use) for a declared resource; a garbage, expired or
-     *   revoked token with the right prefix is CSRF checked like any other request;
-     * - that resource's token paths cover the request: by default the path of the resource, or
-     *   `OAuthServer.tokenPaths` for every resource, or $paths. A resource at the host root has no path of its own;
-     * - both the request path and the static part of the template of the route that matched it are within those
-     *   paths (see TokenAuthenticator); a request that was not routed yet (CSRF middleware before
-     *   RoutingMiddleware) is never skipped for a bearer token.
+     * - it carries no cookie (neither a `Cookie` header nor cookie parameters), no HTTP Basic or Digest
+     *   credentials (`PHP_AUTH_USER`, `PHP_AUTH_DIGEST`), no user the web server authenticated (`REMOTE_USER`) and
+     *   no Authorization header with another scheme than `Bearer`. Then CSRF protects nothing, and the Token
+     *   authenticator or the route answers: 401 with its challenge for an expired, revoked, foreign or made up
+     *   token, so clients learn to refresh or to sign in again (MCP clients POST every message). The application's
+     *   login page, `OAuthServer.login.url`, is never skipped this way, even when the token paths cover it;
+     * - or it carries a cookie and a bearer token with this server's access or personal prefix (`<prefix>_at_`,
+     *   `<prefix>_pat_`) that validates (the core's TokenValidator, without recording a use) for a resource whose
+     *   paths cover it. A garbage, expired or revoked token sent with a cookie is CSRF checked like any other
+     *   request, so it cannot carry a session request past CSRF.
      *
-     * The consent and connections pages are session pages and are never skipped, with or without a bearer token.
+     * The routes of a resource are its token paths: by default the path of the resource, or `OAuthServer.tokenPaths`
+     * for every resource, or $paths. A resource at the host root has no path of its own. Both the request path and
+     * the static part of the template of the route that matched it must be within those paths (see
+     * TokenAuthenticator); a request that was not routed yet (CSRF middleware before RoutingMiddleware) is never
+     * skipped there.
+     *
+     * The consent and connections pages are session pages and are never skipped, whatever the request carries.
      * Paths are compared after the normalisation the router applies, and a path with `%2F`, an empty segment or
      * `.` / `..` segments is never skipped.
      *
      * It never throws. The client endpoints are found where the plugin connected them, so they are skipped with
      * any configuration, a broken one included (they then answer 503). The server is built only for a request
-     * that carries a bearer token with this server's prefix within the token paths, because only that token needs
-     * validating; when the configuration cannot be read, the server cannot be built or the lookup fails, that
-     * request is not skipped and a warning goes to the `oauth` log (never the token).
+     * with a cookie and a bearer token with this server's prefix within the token paths, because only that token
+     * needs validating; when the configuration cannot be read, the server cannot be built or the lookup fails,
+     * that request is not skipped and a warning goes to the `oauth` log (never the token). So is a request whose
+     * token paths or login page cannot be read.
      *
      * @param \Psr\Http\Message\ServerRequestInterface $request The request.
      * @param list<string>|null $paths Path prefixes where a bearer token of any declared resource is accepted, when
@@ -95,9 +107,9 @@ final class OAuthServer
         try {
             return self::skipsCsrf($request, $paths);
         } catch (Throwable $e) {
-            // Only the bearer branch can fail, and it never skips the check then.
+            // Only the resource branches can fail, and they never skip the check then.
             (new CakeLogger())->warning(
-                'CSRF protection was not skipped for a bearer request to {path}: {message}',
+                'CSRF protection was not skipped for a request to {path}: {message}',
                 ['path' => $request->getUri()->getPath(), 'message' => $e->getMessage(), 'exception' => $e],
             );
 
@@ -106,7 +118,7 @@ final class OAuthServer
     }
 
     /**
-     * csrfSkip(), allowed to throw in its bearer branch.
+     * csrfSkip(), allowed to throw where it reads the resources, the login page or the token.
      *
      * @param \Psr\Http\Message\ServerRequestInterface $request The request.
      * @param list<string>|null $paths Path prefixes, or null for the configured ones.
@@ -131,6 +143,16 @@ final class OAuthServer
                 return false;
             }
         }
+        if ($paths !== null) {
+            $paths = array_values(array_filter(array_map(RequestPaths::normalize(...), $paths), 'is_string'));
+        }
+        if (!self::carriesAmbientCredentials($request)) {
+            // Nothing a browser attaches by itself, so CSRF protects nothing: on the routes of a resource the Token
+            // authenticator or the route answers, with its 401 and challenge. The login signs people in without a
+            // session, so it stays checked.
+            return self::resourcesCovering($request, $config, $paths) !== []
+                && !self::isLoginPage($request, $config);
+        }
         $token = self::bearerToken($request);
         if ($token === null) {
             return false;
@@ -139,19 +161,11 @@ final class OAuthServer
         if ($own === null || !str_starts_with($token, $own . '_at_') && !str_starts_with($token, $own . '_pat_')) {
             return false;
         }
-        if ($paths !== null) {
-            $paths = array_values(array_filter(array_map(RequestPaths::normalize(...), $paths), 'is_string'));
-        }
-        $resources = [];
-        foreach ($config->resourcePaths() as $resource => $resourcePaths) {
-            if (RequestPaths::routedWithin($request, $paths ?? $resourcePaths)) {
-                $resources[] = $resource;
-            }
-        }
+        $resources = self::resourcesCovering($request, $config, $paths);
         if ($resources === []) {
             return false;
         }
-        // Only now is the server needed: a request without such a token never builds it.
+        // Only now is the server needed: a request without a cookie, or without such a token, never builds it.
         $validator = self::server()->tokenValidator();
         try {
             foreach ($resources as $resource) {
@@ -168,6 +182,78 @@ final class OAuthServer
         }
 
         return false;
+    }
+
+    /**
+     * The declared resources whose token paths ($paths for all of them when given) cover $request as routed.
+     *
+     * @param \Psr\Http\Message\ServerRequestInterface $request The request.
+     * @param \CakeDC\OAuthServer\Config\PluginConfig $config The configuration.
+     * @param list<string>|null $paths Normalized path prefixes, or null for the configured ones.
+     * @return list<string>
+     */
+    private static function resourcesCovering(
+        ServerRequestInterface $request,
+        PluginConfig $config,
+        ?array $paths,
+    ): array {
+        $resources = [];
+        foreach ($config->resourcePaths() as $resource => $resourcePaths) {
+            if (RequestPaths::routedWithin($request, $paths ?? $resourcePaths)) {
+                $resources[] = $resource;
+            }
+        }
+
+        return $resources;
+    }
+
+    /**
+     * Whether $request carries something a browser sends by itself to this site, which a page on another site
+     * could make it send: a cookie, HTTP Basic or Digest credentials, a user the web server authenticated, or an
+     * Authorization header of another scheme than Bearer.
+     *
+     * @param \Psr\Http\Message\ServerRequestInterface $request The request.
+     * @return bool
+     */
+    private static function carriesAmbientCredentials(ServerRequestInterface $request): bool
+    {
+        if ($request->getHeaderLine('Cookie') !== '' || $request->getCookieParams() !== []) {
+            return true;
+        }
+        $authorization = $request->getHeaderLine('Authorization');
+        if ($authorization !== '' && preg_match('/^Bearer(?:[ \t]|$)/i', $authorization) !== 1) {
+            return true;
+        }
+        $server = $request->getServerParams();
+        foreach (['PHP_AUTH_USER', 'PHP_AUTH_DIGEST', 'REMOTE_USER'] as $name) {
+            if (isset($server[$name]) && $server[$name] !== '') {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Whether $request goes to the application's login page (`OAuthServer.login.url`), compared like the consent
+     * page: after normalisation, base directory included, in any case.
+     *
+     * @param \Psr\Http\Message\ServerRequestInterface $request The request.
+     * @param \CakeDC\OAuthServer\Config\PluginConfig $config The configuration.
+     * @return bool
+     */
+    private static function isLoginPage(ServerRequestInterface $request, PluginConfig $config): bool
+    {
+        $login = $config->login()['url'];
+        if (is_array($login) && !isset($login['_name'])) {
+            // As SessionUserContext builds it: Router::url() would fill plugin and prefix from the current request.
+            $login += ['plugin' => false, 'prefix' => false];
+        }
+        $path = parse_url(Router::url($login), PHP_URL_PATH);
+        $login = is_string($path) ? RequestPaths::normalize($path) : null;
+        $here = RequestPaths::fullPath($request);
+
+        return $login === null || $here === null || strtolower($login) === strtolower($here);
     }
 
     /**

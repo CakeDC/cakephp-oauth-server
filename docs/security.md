@@ -8,15 +8,18 @@ and never relaxes what it enforces. This page lists what the plugin adds and wha
 ## What the plugin adds
 
 - **Cake's CSRF stays on the consent and connections forms.** By `OAuthServer::csrfSkip()` only the token,
-  register, revoke and introspect endpoints, and requests with a bearer token that validates on the routes
-  of its resource (see the next point), are skipped, because those clients cannot send a token. A token
-  with this server's prefix that does not validate gets the normal CSRF check. The forms are built with `FormHelper`; a template override must do the same
-  ([pages](pages.md#forms-and-csrf)). The core also signs the forms with `OAuthServer.secret`.
+  register, revoke and introspect endpoints are skipped, plus, on the routes of a resource (see the next
+  point), requests that carry no cookie or other credential a browser sends by itself (CSRF has nothing to
+  protect there, and an expired or revoked token gets the authenticator's 401) and requests with a cookie and a
+  bearer token that validates. A request with a cookie and a token of this server's prefix that does not
+  validate gets the normal CSRF check, and so does the login page. The forms are built with `FormHelper`; a
+  template override must do the same ([pages](pages.md#forms-and-csrf)). The core also signs the forms with
+  `OAuthServer.secret`.
 - **A token works only on the routes of its resource.** The Token authenticator authenticates a token only
   when both the request path and the static part of the template of the route that matched it are below
   the path of the resource it was issued for (`/api` for `https://example.com/api`, or its `paths` option);
   anywhere else a request carrying this server's token is refused with 401, and `OAuthServer::csrfSkip()`
-  skips CSRF for a bearer request only by the same rule. A consented token therefore cannot act as the person
+  skips CSRF on a resource's routes only by the same rule. A consented token therefore cannot act as the person
   on a session page whose route is not connected below the resource's path, including routes that start with
   a placeholder (`/{tenant}/...`). What you connect below that path is part of the resource, and inside it
   your actions still check scopes ([protecting-apis](protecting-apis.md#where-a-token-works)).

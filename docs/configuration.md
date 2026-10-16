@@ -165,11 +165,12 @@ matched route), and scope checks inside them are your job. See [cakedc-users](ca
 ### `tokenPaths`
 
 A list of path prefixes (`['/api', '/mcp']`) where bearer tokens of this server are expected. Optional.
-`OAuthServer::csrfSkip()` skips CSRF for a bearer request only when its token validates and the request is on
-routes below these paths, and the cakedc/users integration authenticates only there when `users.paths` is not
-set. Default: the paths of the declared
+On routes below these paths `OAuthServer::csrfSkip()` skips CSRF for a request without cookies and for a request
+with a cookie and a token that validates ([installation](installation.md#csrf)), and the cakedc/users
+integration authenticates only there when `users.paths` is not set. Default: the paths of the declared
 `resources`, where a resource at the host root contributes nothing. Set `['/']` to make tokens work on every
-route; that is a deliberate choice, never a default. Prefixes match on segment boundaries (`/api` covers
+route; that is a deliberate choice, never a default: a request without cookies then skips CSRF on every route
+except the consent and connections pages and the login. Prefixes match on segment boundaries (`/api` covers
 `/api/x`, not `/apix`) and are compared with the full request path and with the static part of the matched
 route's template, base directory included ([where a token works](protecting-apis.md#where-a-token-works)).
 If you set
@@ -215,15 +216,16 @@ application down:
 | Pages of the application, the login included | Work as usual |
 | The metadata document, `token`, `register`, `revoke`, `introspect` | `503` with `{"error": "temporarily_unavailable"}`, `Cache-Control: no-store`, `Retry-After: 300` and the endpoints' usual CORS headers, so browser clients can read it (a CORS preflight gets the usual `204`) |
 | The consent and connections pages | `503`, rendered by your application's error page |
-| A request with a bearer token of this server (`<tokenPrefix>_at_`, `<tokenPrefix>_pat_`) | `401` from the Token authenticator, never passed on to the session |
-| `OAuthServer::csrfSkip()` | Still skips the client endpoints; never skips a bearer request |
+| A request with a bearer token of this server (`<tokenPrefix>_at_`, `<tokenPrefix>_pat_`) | `401` from the Token authenticator, never passed on to the session. A POST, PUT, PATCH or DELETE reaches it only when `csrfSkip()` lets it through (next line); otherwise the CSRF middleware answers `403` first |
+| `OAuthServer::csrfSkip()` | Still skips the client endpoints. On the routes of a resource it still skips a request without cookies (a bearer one then gets the `401` above) as long as the resources, the issuer and `tokenPaths` can be read; when they cannot, it skips nothing else. It never skips a request with a cookie and a bearer token, which would need the server to validate it |
 | `bin/cake`, migrations | Work as usual; `bin/cake oauth check` reports the setting to fix |
 
 Each refusal writes the reason to the `oauth` log scope (the setting to fix, never a token or the secret):
 look there first when OAuth answers 503 or every token gets 401. A broken configuration costs other requests
 next to nothing: the Token authenticator reads only the `tokenPrefix` setting until a request carries such a
 token, and `csrfSkip()` reads the route prefix (where the plugin connected its endpoints) on every
-state-changing request plus `tokenPrefix` for a bearer request; neither builds the server for them. When
+state-changing request, plus the resources and `tokenPaths` for a request without cookies and `tokenPrefix`,
+the resources and `tokenPaths` for a bearer request with one; neither builds the server for them. When
 `tokenPrefix` itself is not a string, every bearer token is treated as this server's and refused.
 
 ## A complete example

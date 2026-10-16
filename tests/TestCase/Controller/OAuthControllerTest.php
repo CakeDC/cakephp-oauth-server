@@ -288,6 +288,7 @@ class OAuthControllerTest extends TestCase
         $this->post('/oauth/authorize', $fields + ['decision' => 'approve']);
 
         $this->assertResponseCode(403);
+        $this->assertResponseContains('Missing or incorrect CSRF cookie type.');
     }
 
     public function testClientEndpointsNeedNoCsrfToken(): void

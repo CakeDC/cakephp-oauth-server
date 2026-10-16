@@ -29,6 +29,11 @@ class BrokenConfigurationTest extends TestCase
 
     protected array $fixtures = Fixtures::ALL;
 
+    /**
+     * The broken configurations under which the resources or the token paths themselves cannot be read.
+     */
+    private const UNREADABLE_PATHS = ['issuer', 'resource', 'tokenPaths'];
+
     private string $settings = '';
 
     private mixed $baseUrl = null;
@@ -228,43 +233,76 @@ class BrokenConfigurationTest extends TestCase
     }
 
     #[DataProvider('brokenConfigurations')]
-    public function testCsrfSkipStillSkipsTheClientEndpointsButNoBearerRequest(string $how): void
+    public function testCsrfSkipStillSkipsTheClientEndpointsButNoBearerRequestWithACookie(string $how): void
     {
         $token = $this->oauthTokenFor(1, ['api'], 'http://localhost/api');
         $this->breakConfiguration($how);
-        $post = fn(string $path, ?string $bearer): bool => OAuthServer::csrfSkip(Routed::request(
+        $post = fn(string $path, ?string $bearer, bool $cookie = false): bool => OAuthServer::csrfSkip(Routed::request(
             $path,
             $path === '/api/posts' ? '/api/**' : $path,
-            ['environment' => ['REQUEST_METHOD' => 'POST'] + ($bearer === null ? [] : [
-                'HTTP_AUTHORIZATION' => 'Bearer ' . $bearer,
-            ])],
+            [
+                'environment' => ['REQUEST_METHOD' => 'POST'] + ($bearer === null ? [] : [
+                    'HTTP_AUTHORIZATION' => 'Bearer ' . $bearer,
+                ]),
+                'cookies' => $cookie ? [(string)session_name() => 'abc'] : [],
+            ],
         ));
 
         $this->assertTrue($post('/oauth/token', null));
         $this->assertTrue($post('/oauth/revoke', null));
         $this->assertFalse($post('/oauth/authorize', null));
-        $this->assertFalse($post('/api/posts', $token));
+        $this->assertFalse($post('/api/posts', $token, true));
         $this->assertStringContainsString('warning: CSRF protection was not skipped', $this->logged());
         $this->assertStringNotContainsString($token, $this->logged());
+
+        // Without a cookie the token needs no validating, so the request is skipped (the Token authenticator answers
+        // 401) as long as the resources and token paths can be read; otherwise nothing is skipped.
+        $readable = !in_array($how, self::UNREADABLE_PATHS, true);
+        $this->assertSame($readable, $post('/api/posts', $token));
+        $this->assertSame($readable, $post('/api/posts', null));
     }
 
-    public function testCsrfSkipBuildsTheServerOnlyForABearerTokenWithinTheTokenPaths(): void
+    public function testCsrfSkipBuildsTheServerOnlyForABearerTokenWithACookieWithinTheTokenPaths(): void
     {
         $token = $this->oauthTokenFor(1, ['api'], 'http://localhost/api');
         $this->breakConfiguration('salt');
-        $post = fn(string $path, string $template): bool => OAuthServer::csrfSkip(Routed::request($path, $template, [
-            'environment' => ['REQUEST_METHOD' => 'POST', 'HTTP_AUTHORIZATION' => 'Bearer ' . $token],
-        ]));
+        $post = fn(string $path, string $template, bool $cookie = true): bool => OAuthServer::csrfSkip(
+            Routed::request($path, $template, [
+                'environment' => ['REQUEST_METHOD' => 'POST', 'HTTP_AUTHORIZATION' => 'Bearer ' . $token],
+                'cookies' => $cookie ? [(string)session_name() => 'abc'] : [],
+            ]),
+        );
 
         // Outside the token paths the server is never built, so the broken salt leaves no trace.
         $this->assertFalse($post('/account/delete', '/account/delete'));
         $this->assertFalse($post('/mcp/account/delete', '/{tenant}/account/delete'));
+        $this->assertFalse($post('/account/delete', '/account/delete', false));
+        // Inside them, without a cookie, nothing needs validating.
+        $this->assertTrue($post('/api/posts', '/api/**', false));
         $this->assertSame('', $this->logged());
 
-        // Inside them the token has to be validated: the server cannot be built, so nothing is skipped.
+        // With a cookie the token has to be validated: the server cannot be built, so nothing is skipped.
         $this->assertFalse($post('/api/posts', '/api/**'));
         $this->assertStringContainsString('Security.salt', $this->logged());
         $this->assertStringNotContainsString($token, $this->logged());
+    }
+
+    #[DataProvider('brokenConfigurations')]
+    public function testABearerPostOnAResourceRouteGets401WhenTheTokenPathsCanBeRead(string $how): void
+    {
+        $this->breakConfiguration($how);
+
+        $this->configRequest(['headers' => ['Authorization' => 'Bearer test_at_' . str_repeat('x', 43)]]);
+        $this->post('/api/me', ['x' => '1']);
+
+        if (in_array($how, self::UNREADABLE_PATHS, true)) {
+            // Where the token works cannot be told, so CSRF protection stays on and refuses it first.
+            $this->assertResponseCode(403);
+            $this->assertResponseContains('Missing or incorrect CSRF cookie type.');
+        } else {
+            $this->assertResponseCode(401);
+            $this->assertHeaderContains('WWW-Authenticate', 'error="invalid_token"');
+        }
     }
 
     public function testATokenPrefixThatCannotBeReadRefusesEveryBearerToken(): void

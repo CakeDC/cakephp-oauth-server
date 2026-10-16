@@ -75,6 +75,8 @@ class Application extends BaseApplication implements
             // Deeper API routes, and a sibling whose name starts with "api".
             $builder->connect('/api/**', ['controller' => 'Pages', 'action' => 'me']);
             $builder->connect('/apix/**', ['controller' => 'Pages', 'action' => 'me']);
+            // An MCP endpoint: Streamable HTTP posts every message here.
+            $builder->connect('/mcp', ['controller' => 'Pages', 'action' => 'mcp']);
             // A session route that changes state.
             // Routes whose first segment is a free parameter: an encoded slash must not reach them as a path,
             // and a path that looks like a resource's (/mcp/account/delete) must not carry its token there.

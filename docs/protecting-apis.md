@@ -98,8 +98,8 @@ So a token for `https://example.com/api` can act as the person on a route whose 
   Before routing there is no matched route, and every one of this server's tokens is refused with 401.
 
 Inside its routes the token proves who the caller is and which scopes were granted, nothing more: your
-actions still check `OAuthServer::token($request)->hasScope(...)`. CSRF is skipped for a bearer request by
-the same two checks, and only for a token that validates (see [installation](installation.md#csrf)); keep
+actions still check `OAuthServer::token($request)->hasScope(...)`. `OAuthServer::csrfSkip()` decides where a
+request is on the routes of a resource by the same two checks (see [installation](installation.md#csrf)); keep
 both lists consistent when you set custom `paths` by passing the same list to
 `OAuthServer::csrfSkip($request, $paths)` or by setting `OAuthServer.tokenPaths`.
 
@@ -139,13 +139,16 @@ Pragma: no-cache
 
 ## CSRF on token routes
 
-A bearer authenticated POST, PUT or DELETE to your API route would be rejected by Cake's CSRF middleware,
-because API clients send no CSRF token. `OAuthServer::csrfSkip()` (see [installation](installation.md#csrf))
-returns `true` for requests carrying a valid bearer token of this server on the routes of its resource, so
-using it in `skipCheckCallback()` is enough. Keep CSRF protection on for your session routes and never
-disable it globally: requests with no bearer token, with a foreign one, or with one of this server's prefix
-that does not validate (expired, revoked, made up) are still checked, and get 403 before the authenticator
-sees them.
+A POST, PUT or DELETE from an API client to your API route would be rejected by Cake's CSRF middleware,
+because API clients send no CSRF token. On the routes of your resources, `OAuthServer::csrfSkip()` (see
+[installation](installation.md#csrf)) returns `true` for a request that carries no cookie (nor another
+credential a browser sends by itself, such as HTTP Basic) and for a request that carries a cookie and a valid
+bearer token of this server, so using it in `skipCheckCallback()` is enough. A client whose token expired, was
+revoked or belongs to another resource therefore gets the 401 above with its challenge, and knows to refresh or
+to sign in again; a client that sends no token reaches your action. Keep CSRF protection on for your session
+routes and never disable it globally: a request with a cookie and no valid token of this server (none, a
+foreign one, or one of this server's prefix that does not validate) is still checked, and gets 403 before the
+authenticator sees it.
 
 ## Reading the token and checking scopes
 

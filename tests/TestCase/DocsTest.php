@@ -9,6 +9,11 @@ use PHPUnit\Framework\TestCase;
 class DocsTest extends TestCase
 {
     /**
+     * Composer reads stability flags from the root package only, so a beta of the plugin needs the core named too.
+     */
+    private const BETA_INSTALL = 'composer require cakedc/cakephp-oauth-server:^1.0@beta cakedc/oauth-server:^1.0@beta';
+
+    /**
      * Every Markdown file of the documentation, README first.
      *
      * @return list<string>
@@ -64,7 +69,8 @@ class DocsTest extends TestCase
             ],
             'installation.md' => [
                 'OAuthServer::csrfSkip', 'migrations migrate -p CakeDC/OAuthServer', 'CakeDC/OAuthServer.Token',
-                '20261017120000_AddOAuthCodesSubjectIndex.php',
+                '20261017120000_AddOAuthCodesSubjectIndex.php', self::BETA_INSTALL, '"prefer-stable": true',
+                'no cookie',
             ],
             'protecting-apis.md' => [
                 'OAuthServer::token', 'OAuthIdentity', 'CakeDC/OAuthServer.Token', 'resourceMetadataUrl',
@@ -83,12 +89,12 @@ class DocsTest extends TestCase
             'testing.md' => [
                 'OAuthTestTrait', 'oauthTokenFor', 'withOAuthToken', 'actAsOAuth', 'OAuthServer::reset',
             ],
-            'mcp.md' => ['mcpTokenValidator', 'cakedc/cakephp-mcp', 'mcp/sdk 0.9'],
+            'mcp.md' => ['mcpTokenValidator', 'cakedc/cakephp-mcp', 'mcp/sdk 0.9', 'resource_metadata'],
             'deployment.md' => [
                 'trustProxy', 'setTrustedProxies', '160.79.104.0/21', 'utf8mb4_bin', 'CHAR(36)',
             ],
             'troubleshooting.md' => ['oauth check', 'OAuthServer::csrfSkip'],
-            'index.md' => ['OAuthServer::server', 'OAuthServer::forRequest', 'OAuthServer::reset'],
+            'index.md' => ['OAuthServer::server', 'OAuthServer::forRequest', 'OAuthServer::reset', 'QuotedName'],
         ];
     }
 
@@ -135,6 +141,14 @@ class DocsTest extends TestCase
         if ($page !== 'index.md') {
             $this->assertStringContainsString('(' . $page . ')', (string)file_get_contents($root . '/docs/index.md'));
         }
+    }
+
+    public function testTheReadmeGivesTheBetaInstallCommand(): void
+    {
+        $this->assertStringContainsString(
+            self::BETA_INSTALL,
+            (string)file_get_contents(dirname(__DIR__, 2) . '/README.md'),
+        );
     }
 
     public function testEveryExpectedPageExists(): void

@@ -44,7 +44,8 @@ library `cakedc/oauth-server`, whose documentation covers the OAuth side in dept
 Before 1.0 the supported surface is: `OAuthServerPlugin`, `OAuthServer` (except `pageCsp()` and
 `forRequest()`, which the plugin's controller uses), `TokenAuthenticator` (except `resolve()`, which
 `oauth check` uses) and `OAuthServerTokenAuthenticator`, `OAuthIdentity`, `OrmStorage`, `OrmUserProvider`,
-`SessionUserContext`, the Table and Entity classes (no entity field is mass assignable and the hashes are hidden;
+`SessionUserContext`, `QuotedName` (prints a client-chosen name in template overrides,
+[pages](pages.md#variables)), the Table and Entity classes (no entity field is mass assignable and the hashes are hidden;
 pass `accessibleFields` when you patch one), the commands and `OAuthTestTrait`, plus the configuration keys and
 events documented here. Everything else (`PluginConfig`, `ServerFactory`, the `Cake*Renderer` classes and
 `CakeTemplateRenderer`, `UsersIntegration`, `UsersOneTimeTokenAuthenticator`, `PluginMessagesLoader`,
