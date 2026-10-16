@@ -1,0 +1,98 @@
+name: CI
+
+# The core (cakedc/oauth-server) is not published yet: the jobs check it out next to the plugin,
+# where the Composer path repository expects it. Switch to the Packagist version once it is published.
+on:
+  push:
+  pull_request:
+
+jobs:
+  testsuite:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        php-version: ['8.2', '8.3', '8.4', '8.5']
+        db: ['sqlite']
+        dependencies: ['highest']
+        include:
+          - php-version: '8.2'
+            db: 'sqlite'
+            dependencies: 'lowest'
+          - php-version: '8.4'
+            db: 'mysql'
+            dependencies: 'highest'
+          - php-version: '8.4'
+            db: 'mariadb'
+            dependencies: 'highest'
+          - php-version: '8.4'
+            db: 'pgsql'
+            dependencies: 'highest'
+    name: PHP ${{ matrix.php-version }} (${{ matrix.db }}, ${{ matrix.dependencies }})
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: oauth
+        ports: ['3306:3306']
+      mariadb:
+        image: mariadb:11.8
+        env:
+          MARIADB_ROOT_PASSWORD: root
+          MARIADB_DATABASE: oauth
+        ports: ['3307:3306']
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: root
+          POSTGRES_DB: oauth
+        ports: ['5432:5432']
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: cakephp-oauth-server
+      - uses: actions/checkout@v4
+        with:
+          repository: CakeDC/oauth-server
+          ref: 1.x
+          path: oauth-server
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php-version }}
+          extensions: curl, intl, pdo_sqlite, pdo_mysql, pdo_pgsql
+          coverage: none
+      - run: |
+          if [ "${{ matrix.dependencies }}" = "lowest" ]; then
+            composer update --prefer-lowest --prefer-stable --no-interaction
+          else
+            composer install --no-interaction
+          fi
+        working-directory: cakephp-oauth-server
+      - run: |
+          case "${{ matrix.db }}" in
+            mysql) export DB_URL="mysql://root:root@127.0.0.1:3306/oauth" ;;
+            mariadb) export DB_URL="mysql://root:root@127.0.0.1:3307/oauth" ;;
+            pgsql) export DB_URL="postgres://postgres:root@127.0.0.1:5432/oauth" ;;
+          esac
+          vendor/bin/phpunit
+        working-directory: cakephp-oauth-server
+
+  coding-standard:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: cakephp-oauth-server
+      - uses: actions/checkout@v4
+        with:
+          repository: CakeDC/oauth-server
+          ref: 1.x
+          path: oauth-server
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: intl
+          coverage: none
+      - run: composer install --no-interaction && vendor/bin/phpcs --colors -p && vendor/bin/phpstan analyse --no-progress
+        working-directory: cakephp-oauth-server
