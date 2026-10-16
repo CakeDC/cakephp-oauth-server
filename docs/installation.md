@@ -21,10 +21,18 @@ public function bootstrap(): void
 }
 ```
 
-Loading the plugin does four things: it connects the routes (see [Routes](#routes)), registers the
-`oauth` commands, registers a log file for the `oauth` log scope when no engine handles it (see
-[security](security.md#logging)), and, if `CakeDC/Users` is loaded, applies the
-[cakedc/users integration](cakedc-users.md). Load `CakeDC/Users` before this plugin.
+Loading the plugin does these things:
+
+- connects the routes (see [Routes](#routes));
+- registers the `oauth` commands;
+- registers a log file for the `oauth` log scope when no engine handles it (see
+  [security](security.md#logging));
+- registers the loader of the `oauth_server` translation domain, so the plugin's messages and your own
+  `resources/locales/<locale>/oauth_server.po` overrides work (see [pages](pages.md));
+- puts the core `AuthorizationServer` in the application's container, so controllers and commands can type-hint
+  it (it is the same object as `OAuthServer::server()`);
+- if `CakeDC/Users` is loaded, applies the [cakedc/users integration](cakedc-users.md). Load `CakeDC/Users`
+  before this plugin.
 
 A broken configuration (an invalid issuer or route prefix) fails at boot on web requests with an error
 that names the setting. On the command line the routes fall back to `/oauth` so `bin/cake` keeps working
