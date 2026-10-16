@@ -4,10 +4,13 @@ declare(strict_types=1);
 namespace CakeDC\OAuthServer;
 
 use Cake\Core\BasePlugin;
+use Cake\Core\ContainerInterface;
 use Cake\Core\PluginApplicationInterface;
 use Cake\Log\Engine\BaseLog;
 use Cake\Log\Engine\FileLog;
 use Cake\Log\Log;
+use CakeDC\OAuth\Server\AuthorizationServer;
+use CakeDC\OAuthServer\I18n\PluginMessagesLoader;
 
 /**
  * An OAuth 2.1 authorization server for CakePHP applications.
@@ -21,11 +24,13 @@ class OAuthServerPlugin extends BasePlugin
     {
         parent::bootstrap($app);
         $this->registerLogEngine();
+        PluginMessagesLoader::register();
     }
 
     /**
-     * Adds an `oauth` log file unless an engine already receives the `oauth` scope (listed or catch-all) or `oauth` is taken. The skeleton's
-     * debug and error engines have no scopes, so they do not receive scoped messages.
+     * Adds an `oauth` log file unless an engine already receives the `oauth` scope (listed or catch-all)
+     * or `oauth` is taken. The skeleton's debug and error engines have no scopes, so they do not receive
+     * scoped messages.
      *
      * @return void
      */
@@ -48,5 +53,16 @@ class OAuthServerPlugin extends BasePlugin
             'file' => 'oauth',
             'scopes' => ['oauth'],
         ]);
+    }
+
+    /**
+     * Makes the server available to type-hinted controller actions and commands.
+     *
+     * @param \Cake\Core\ContainerInterface $container The container.
+     * @return void
+     */
+    public function services(ContainerInterface $container): void
+    {
+        $container->addShared(AuthorizationServer::class, static fn(): AuthorizationServer => OAuthServer::server());
     }
 }

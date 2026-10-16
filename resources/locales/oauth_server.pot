@@ -1,0 +1,94 @@
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+msgid "Authorize {0}"
+msgstr ""
+
+msgid "{0} wants to access {1}"
+msgstr ""
+
+msgid "The request comes from {0}. Your answer is sent to {1}."
+msgstr ""
+
+msgid "This application registered itself; its name is not verified."
+msgstr ""
+
+msgid "Only continue if you just started this from an application on this computer: any program on this computer can use this address."
+msgstr ""
+
+msgid "Signed in as {0}."
+msgstr ""
+
+msgid "It will be able to:"
+msgstr ""
+
+msgid "Stay connected until you revoke it."
+msgstr ""
+
+msgid "Allow"
+msgstr ""
+
+msgid "Deny"
+msgstr ""
+
+msgid "Authorization failed"
+msgstr ""
+
+msgid "The application sent a request that cannot be completed."
+msgstr ""
+
+msgid "Connected applications"
+msgstr ""
+
+msgid "Never"
+msgstr ""
+
+msgid "No application is connected."
+msgstr ""
+
+msgid "Application"
+msgstr ""
+
+msgid "Access to"
+msgstr ""
+
+msgid "Permissions"
+msgstr ""
+
+msgid "Connected"
+msgstr ""
+
+msgid "Last used"
+msgstr ""
+
+msgid "Revoke"
+msgstr ""
+
+msgid "Unverified: this application registered itself."
+msgstr ""
+
+msgid "Personal access tokens"
+msgstr ""
+
+msgid "Copy your new token now. It will not be shown again:"
+msgstr ""
+
+msgid "You have no personal access tokens."
+msgstr ""
+
+msgid "Name"
+msgstr ""
+
+msgid "Resource"
+msgstr ""
+
+msgid "Expires"
+msgstr ""
+
+msgid "Expires in (days, up to {0})"
+msgstr ""
+
+msgid "Create token"
+msgstr ""

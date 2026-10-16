@@ -6,6 +6,7 @@ use Cake\Core\Configure;
 use Cake\Core\Plugin;
 use Cake\Datasource\ConnectionManager;
 use Cake\Utility\Security;
+use CakeDC\OAuthServer\I18n\PluginMessagesLoader;
 use CakeDC\OAuthServer\OAuthServerPlugin;
 use Migrations\TestSuite\Migrator;
 
@@ -29,6 +30,7 @@ define('CAKE', CORE_PATH . 'src' . DS);
 
 require $pluginRoot . '/vendor/autoload.php';
 require CORE_PATH . 'config' . DS . 'bootstrap.php';
+require CAKE . 'functions.php';
 
 date_default_timezone_set('UTC');
 Configure::write('debug', true);
@@ -86,4 +88,5 @@ Configure::write('OAuthServer', [
 ]);
 
 Plugin::getCollection()->add(new OAuthServerPlugin());
+PluginMessagesLoader::register();
 (new Migrator())->runMany([['plugin' => 'CakeDC/OAuthServer'], []]);

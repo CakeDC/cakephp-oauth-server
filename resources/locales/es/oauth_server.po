@@ -1,0 +1,96 @@
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Language: es\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+msgid "Authorize {0}"
+msgstr "Autorizar a {0}"
+
+msgid "{0} wants to access {1}"
+msgstr "{0} quiere acceder a {1}"
+
+msgid "The request comes from {0}. Your answer is sent to {1}."
+msgstr "La solicitud viene de {0}. Tu respuesta se envía a {1}."
+
+msgid "This application registered itself; its name is not verified."
+msgstr "Esta aplicación se registró sola; su nombre no está verificado."
+
+msgid "Only continue if you just started this from an application on this computer: any program on this computer can use this address."
+msgstr "Continúa solo si acabas de iniciar esto desde una aplicación de este equipo: cualquier programa de este equipo puede usar esta dirección."
+
+msgid "Signed in as {0}."
+msgstr "Has iniciado sesión como {0}."
+
+msgid "It will be able to:"
+msgstr "Podrá:"
+
+msgid "Stay connected until you revoke it."
+msgstr "Seguir conectada hasta que la revoques."
+
+msgid "Allow"
+msgstr "Permitir"
+
+msgid "Deny"
+msgstr "Rechazar"
+
+msgid "Authorization failed"
+msgstr "La autorización falló"
+
+msgid "The application sent a request that cannot be completed."
+msgstr "La aplicación envió una solicitud que no se puede completar."
+
+msgid "Connected applications"
+msgstr "Aplicaciones conectadas"
+
+msgid "Never"
+msgstr "Nunca"
+
+msgid "No application is connected."
+msgstr "No hay ninguna aplicación conectada."
+
+msgid "Application"
+msgstr "Aplicación"
+
+msgid "Access to"
+msgstr "Acceso a"
+
+msgid "Permissions"
+msgstr "Permisos"
+
+msgid "Connected"
+msgstr "Conectada"
+
+msgid "Last used"
+msgstr "Último uso"
+
+msgid "Revoke"
+msgstr "Revocar"
+
+msgid "Unverified: this application registered itself."
+msgstr "Sin verificar: esta aplicación se registró sola."
+
+msgid "Personal access tokens"
+msgstr "Tokens personales"
+
+msgid "Copy your new token now. It will not be shown again:"
+msgstr "Copia tu nuevo token ahora. No se volverá a mostrar:"
+
+msgid "You have no personal access tokens."
+msgstr "No tienes tokens personales."
+
+msgid "Name"
+msgstr "Nombre"
+
+msgid "Resource"
+msgstr "Recurso"
+
+msgid "Expires"
+msgstr "Vence"
+
+msgid "Expires in (days, up to {0})"
+msgstr "Vence en (días, hasta {0})"
+
+msgid "Create token"
+msgstr "Crear token"
