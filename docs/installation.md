@@ -6,8 +6,9 @@
 composer require cakedc/cakephp-oauth-server
 ```
 
-This also installs the core library `cakedc/oauth-server`. The plugin needs PHP 8.2+, CakePHP 5.0+,
-`cakephp/authentication` 3.x and `cakephp/migrations` 4 or 5.
+This also installs the core library `cakedc/oauth-server`. The plugin needs PHP 8.2+, CakePHP 5.0 or later
+(CI tests from 5.1.10, the lowest release Composer installs because earlier 5.x releases carry security
+advisories), `cakephp/authentication` 3.x and `cakephp/migrations` 4 or 5.
 
 ## Load the plugin
 

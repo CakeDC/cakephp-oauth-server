@@ -16,7 +16,7 @@ this documentation links to them instead of repeating them.
 ## Requirements
 
 - PHP 8.2 or later
-- CakePHP 5.0 or later
+- CakePHP 5.0 or later (CI tests from 5.1.10, the lowest release Composer installs because earlier 5.x releases carry security advisories)
 - `cakephp/authentication` 3.x (your application needs a login that sets the `identity` request attribute)
 - `cakephp/migrations` 4 or 5
 - Optional: `cakedc/users` for a ready-made login (see [cakedc-users](docs/cakedc-users.md)), `cakedc/auth`
