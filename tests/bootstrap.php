@@ -9,6 +9,7 @@ use Cake\Utility\Security;
 use CakeDC\OAuthServer\I18n\PluginMessagesLoader;
 use CakeDC\OAuthServer\OAuthServerPlugin;
 use Migrations\TestSuite\Migrator;
+use UsersTestApp\Application;
 
 if (!defined('DS')) {
     define('DS', DIRECTORY_SEPARATOR);
@@ -87,6 +88,17 @@ Configure::write('OAuthServer', [
     'rateLimit' => ['cache' => null],
 ]);
 
-Plugin::getCollection()->add(new OAuthServerPlugin());
 PluginMessagesLoader::register();
-(new Migrator())->runMany([['plugin' => 'CakeDC/OAuthServer'], []]);
+if ($appDir === 'test_app_users') {
+    // A host that uses cakedc/users: its own login, sessions and RBAC. People come from the users table,
+    // and the Token authenticator validates against the API resource.
+    Configure::delete('OAuthServer.userProvider');
+    Configure::write('OAuthServer.users.resource', 'http://localhost/api');
+    $app = new Application(CONFIG);
+    $app->bootstrap();
+    $app->pluginBootstrap();
+    (new Migrator())->runMany([['plugin' => 'CakeDC/Users'], ['plugin' => 'CakeDC/OAuthServer']]);
+} else {
+    Plugin::getCollection()->add(new OAuthServerPlugin());
+    (new Migrator())->runMany([['plugin' => 'CakeDC/OAuthServer'], []]);
+}

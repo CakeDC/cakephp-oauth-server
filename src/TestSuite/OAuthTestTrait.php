@@ -8,13 +8,18 @@ use Authentication\IdentityInterface;
 use Cake\Datasource\EntityInterface;
 use CakeDC\OAuth\Server\Exception\OAuthException;
 use CakeDC\OAuthServer\Config\PluginConfig;
-use CakeDC\OAuthServer\OAuthServer;
 use CakeDC\OAuthServer\Server\ServerFactory;
 use InvalidArgumentException;
 use LogicException;
 
 /**
  * Issues tokens in tests that use IntegrationTestTrait, without going through the OAuth flow.
+ *
+ * The configuration is read when a token is issued. The application under test builds its own server
+ * from `OAuthServer::server()`, which is cached: call `OAuthServer::reset()` after changing the
+ * `OAuthServer` configuration in a test.
+ *
+ * @property array<string, mixed> $_request The request data of IntegrationTestTrait.
  */
 trait OAuthTestTrait
 {
@@ -31,8 +36,9 @@ trait OAuthTestTrait
      */
     protected function oauthTokenFor(mixed $identity, array $scopes = [], ?string $resource = null): string
     {
-        $config = PluginConfig::fromConfigure();
-        $server = OAuthServer::server();
+        // The server and the owner come from the same configuration, read now.
+        $factory = new ServerFactory(PluginConfig::fromConfigure());
+        $server = $factory->create();
         if (!$server->config()->personalTokens) {
             throw new LogicException(
                 'OAuthTestTrait issues personal tokens, but "OAuthServer.personalTokens" is false. ' .
@@ -53,7 +59,7 @@ trait OAuthTestTrait
         if (!is_scalar($subject) || (string)$subject === '') {
             throw new InvalidArgumentException('Cannot tell the id of this identity.');
         }
-        $owner = (new ServerFactory($config))->userProvider()->findBySubject((string)$subject);
+        $owner = $factory->userProvider()->findBySubject((string)$subject);
         if ($owner === null) {
             throw new InvalidArgumentException(
                 sprintf('No active person with id "%s" is known to the user provider.', (string)$subject),
@@ -78,14 +84,22 @@ trait OAuthTestTrait
     }
 
     /**
-     * Sends $token as the bearer token of the next request.
+     * Sends $token as the bearer token of the next request, replacing a token set before.
      *
      * @param string $token The token.
      * @return void
      */
     protected function withOAuthToken(string $token): void
     {
-        $this->configRequest(['headers' => ['Authorization' => 'Bearer ' . $token]]);
+        // configRequest() merges recursively, so a second call would send two Authorization values.
+        $headers = is_array($this->_request['headers'] ?? null) ? $this->_request['headers'] : [];
+        foreach (array_keys($headers) as $name) {
+            if (strcasecmp((string)$name, 'Authorization') === 0) {
+                unset($headers[$name]);
+            }
+        }
+        $headers['Authorization'] = 'Bearer ' . $token;
+        $this->_request['headers'] = $headers;
     }
 
     /**

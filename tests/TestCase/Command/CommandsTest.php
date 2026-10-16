@@ -159,7 +159,7 @@ class CommandsTest extends TestCase
         $this->exec('oauth check');
 
         $this->assertExitSuccess();
-        foreach (['Configuration', 'Tables', 'Users', 'Login URL', 'CSRF', 'Client metadata documents'] as $check) {
+        foreach (['Configuration', 'Tables', 'Users', 'Login URL', 'CSRF', 'RBAC', 'Client metadata documents'] as $check) {
             $this->assertOutputContains('[PASS] ' . $check);
         }
         $this->assertOutputContains('[WARN] Issuer');

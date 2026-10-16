@@ -111,3 +111,22 @@ jobs:
           coverage: none
       - run: composer install --no-interaction && vendor/bin/phpcs --colors -p && vendor/bin/phpstan analyse --no-progress
         working-directory: cakephp-oauth-server
+
+  cakedc-users:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: cakephp-oauth-server
+      - uses: actions/checkout@v4
+        with:
+          repository: CakeDC/oauth-server
+          ref: 1.x
+          path: oauth-server
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: curl, intl, pdo_sqlite
+          coverage: none
+      - run: composer require --dev "cakedc/users:^16.0" --no-interaction && vendor/bin/phpunit -c phpunit.users.xml.dist
+        working-directory: cakephp-oauth-server

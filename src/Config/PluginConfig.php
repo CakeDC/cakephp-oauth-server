@@ -5,6 +5,7 @@ namespace CakeDC\OAuthServer\Config;
 
 use Cake\Core\Configure;
 use Cake\Core\Exception\CakeException;
+use Cake\Core\Plugin;
 use Cake\Utility\Security;
 use CakeDC\OAuth\Server\Client\Cimd\DnsResolverInterface;
 use CakeDC\OAuth\Server\Client\Cimd\HttpTransportInterface;
@@ -25,6 +26,7 @@ final class PluginConfig
         'consent' => ['layout'],
         'connections' => ['enabled', 'layout'],
         'services' => ['clock', 'transport', 'dns'],
+        'users' => ['resource'],
     ];
 
     private const SERVICE_TYPES = [
@@ -222,12 +224,21 @@ final class PluginConfig
     public function userProvider(): array
     {
         $section = $this->section('userProvider');
+        $users = Plugin::isLoaded('CakeDC/Users');
+        $table = $section['table'] ?? null;
+        if ($table === null) {
+            $configured = $users ? Configure::read('Users.table') : null;
+            $usersTable = is_string($configured) && $configured !== '' ? $configured : 'CakeDC/Users.Users';
+            $table = $users ? $usersTable : 'Users';
+        }
 
         return [
             'className' => $section['className'] ?? OrmUserProvider::class,
-            'table' => (string)($section['table'] ?? 'Users'),
+            'table' => (string)$table,
             'finder' => (string)($section['finder'] ?? 'active'),
-            'displayField' => isset($section['displayField']) ? (string)$section['displayField'] : null,
+            'displayField' => isset($section['displayField'])
+                ? (string)$section['displayField']
+                : ($users ? 'username' : null),
             'canAuthorize' => self::callable($section, 'canAuthorize'),
             'scopes' => self::callable($section, 'scopes'),
             'forClient' => self::callable($section, 'forClient'),
@@ -242,13 +253,31 @@ final class PluginConfig
     public function login(): array
     {
         $section = $this->section('login');
-        $url = $section['url'] ?? '/login';
+        $url = $section['url'] ?? (Plugin::isLoaded('CakeDC/Users')
+            ? ['plugin' => 'CakeDC/Users', 'controller' => 'Users', 'action' => 'login', 'prefix' => false]
+            : '/login');
 
         return [
             'url' => is_array($url) ? $url : (string)$url,
             'redirectParam' => (string)($section['redirectParam'] ?? 'redirect'),
             'identityAttribute' => (string)($section['identityAttribute'] ?? 'identity'),
         ];
+    }
+
+    /**
+     * The resource the Token authenticator that the cakedc/users integration registers validates against,
+     * or null for the server's default resource.
+     *
+     * @return string|null
+     */
+    public function usersResource(): ?string
+    {
+        $resource = $this->section('users')['resource'] ?? null;
+        if ($resource !== null && !is_string($resource)) {
+            throw new InvalidArgumentException('"OAuthServer.users.resource" must be a resource identifier.');
+        }
+
+        return $resource;
     }
 
     /**

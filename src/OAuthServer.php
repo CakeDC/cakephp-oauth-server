@@ -117,4 +117,23 @@ final class OAuthServer
     {
         return OAuthIdentity::fromRequest($request);
     }
+
+    /**
+     * RBAC rules (cakedc/auth) that let every OAuth endpoint through; the endpoints decide access
+     * themselves (login for the consent and connections pages, client authentication for the rest).
+     *
+     * @return list<array<string, mixed>>
+     */
+    public static function rbacPermissions(): array
+    {
+        return [
+            [
+                'role' => '*',
+                'plugin' => 'CakeDC/OAuthServer',
+                'controller' => 'OAuth',
+                'action' => '*',
+                'bypassAuth' => true,
+            ],
+        ];
+    }
 }

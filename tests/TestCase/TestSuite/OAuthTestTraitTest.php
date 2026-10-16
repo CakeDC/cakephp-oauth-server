@@ -70,6 +70,18 @@ class OAuthTestTraitTest extends TestCase
         $this->assertResponseContains('{"error":"unauthorized"}');
     }
 
+    public function testASecondTokenReplacesTheFirst(): void
+    {
+        $first = $this->oauthTokenFor(1, [], 'http://localhost/api');
+        $this->withOAuthToken($first);
+        $this->actAsOAuth(2, [], 'http://localhost/api');
+
+        $this->get('/api/me');
+
+        $this->assertResponseOk();
+        $this->assertResponseContains('"id":2');
+    }
+
     public function testRejectsUnknownResources(): void
     {
         $this->expectException(InvalidArgumentException::class);

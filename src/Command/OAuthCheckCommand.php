@@ -9,6 +9,7 @@ use Cake\Console\Arguments;
 use Cake\Console\ConsoleIo;
 use Cake\Core\Configure;
 use Cake\Core\Exception\CakeException;
+use Cake\Core\Plugin;
 use Cake\Database\Connection;
 use Cake\Database\Driver\Mysql;
 use Cake\Datasource\ConnectionManager;
@@ -24,6 +25,7 @@ use Cake\Utility\Security;
 use CakeDC\OAuth\Server\Token\TokenGenerator;
 use CakeDC\OAuthServer\Config\PluginConfig;
 use CakeDC\OAuthServer\Identity\OrmUserProvider;
+use CakeDC\OAuthServer\Integration\UsersIntegration;
 use ReflectionProperty;
 use Throwable;
 
@@ -107,6 +109,9 @@ class OAuthCheckCommand extends Command
             },
             'Login URL' => fn(): array => ['pass', Router::url($config->login()['url'])],
             'CSRF' => fn(): array => $this->csrf($config),
+            'RBAC' => fn(): array => Plugin::isLoaded('CakeDC/Users')
+                ? UsersIntegration::rbacReport()
+                : ['pass', 'cakedc/users is not loaded'],
             'Rate limiting' => function () use ($config): array {
                 $cache = $config->rateLimitCache();
                 if ($cache === null) {
@@ -288,7 +293,13 @@ class OAuthCheckCommand extends Command
         if (!class_exists($class)) {
             return ['warn', 'could not find the application class to inspect its middleware'];
         }
-        $app = new $class(CONFIG);
+        // Building an application replaces the global plugin collection; put the running one back.
+        $plugins = Plugin::getCollection();
+        try {
+            $app = new $class(CONFIG);
+        } finally {
+            Plugin::setCollection($plugins);
+        }
         if (!$app instanceof BaseApplication) {
             return ['warn', 'the application class is not a BaseApplication; its middleware was not inspected'];
         }

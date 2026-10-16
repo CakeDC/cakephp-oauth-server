@@ -6,6 +6,7 @@ namespace CakeDC\OAuthServer;
 use Cake\Console\CommandCollection;
 use Cake\Core\BasePlugin;
 use Cake\Core\ContainerInterface;
+use Cake\Core\Plugin;
 use Cake\Core\PluginApplicationInterface;
 use Cake\Log\Engine\BaseLog;
 use Cake\Log\Engine\FileLog;
@@ -20,6 +21,7 @@ use CakeDC\OAuthServer\Command\OAuthPruneCommand;
 use CakeDC\OAuthServer\Command\OAuthTokenRevokeCommand;
 use CakeDC\OAuthServer\Config\PluginConfig;
 use CakeDC\OAuthServer\I18n\PluginMessagesLoader;
+use CakeDC\OAuthServer\Integration\UsersIntegration;
 
 /**
  * An OAuth 2.1 authorization server for CakePHP applications.
@@ -34,6 +36,9 @@ class OAuthServerPlugin extends BasePlugin
         parent::bootstrap($app);
         $this->registerLogEngine();
         PluginMessagesLoader::register();
+        if (Plugin::isLoaded('CakeDC/Users')) {
+            UsersIntegration::apply();
+        }
     }
 
     /**
