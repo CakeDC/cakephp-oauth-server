@@ -7,6 +7,7 @@ use Cake\Console\ConsoleIo;
 use Cake\Console\TestSuite\ConsoleIntegrationTestTrait;
 use Cake\Console\TestSuite\StubConsoleOutput;
 use Cake\Core\Configure;
+use Cake\Database\Driver\Postgres;
 use Cake\Datasource\ConnectionManager;
 use Cake\Log\Log;
 use Cake\TestSuite\TestCase;
@@ -297,7 +298,8 @@ class CommandsTest extends TestCase
         try {
             $this->exec('oauth check');
         } finally {
-            $connection->execute('ALTER TABLE oauth_tokens ADD COLUMN family_started_at DATETIME NULL');
+            $type = $connection->getDriver() instanceof Postgres ? 'TIMESTAMP(0)' : 'DATETIME';
+            $connection->execute('ALTER TABLE oauth_tokens ADD COLUMN family_started_at ' . $type . ' NULL');
         }
 
         $this->assertExitError();
