@@ -8,6 +8,7 @@ use Authentication\IdentityInterface;
 use Cake\Datasource\EntityInterface;
 use CakeDC\OAuth\Server\Exception\OAuthException;
 use CakeDC\OAuthServer\Config\PluginConfig;
+use CakeDC\OAuthServer\Identity\OrmUserProvider;
 use CakeDC\OAuthServer\Server\ServerFactory;
 use InvalidArgumentException;
 use LogicException;
@@ -26,7 +27,7 @@ trait OAuthTestTrait
     /**
      * A personal token for $identity, valid for a day, built through the public connection service.
      *
-     * @param mixed $identity An id, an identity, an entity or an array with `id`.
+     * @param mixed $identity An id, an identity, or an entity or array with the key column of the users table.
      * @param list<string> $scopes Scopes; the resource's default scopes when empty.
      * @param string|null $resource Resource identifier; the default resource when null.
      * @return string
@@ -50,16 +51,19 @@ trait OAuthTestTrait
         if ($target === null) {
             throw new InvalidArgumentException(sprintf('The resource "%s" is not declared.', (string)$resource));
         }
+        $provider = $factory->userProvider();
+        // A plain entity or array has no identifier of its own: its key column is the one of the users table.
+        $key = $provider instanceof OrmUserProvider ? $provider->keyField() : 'id';
         $subject = match (true) {
             $identity instanceof IdentityInterface => $identity->getIdentifier(),
-            $identity instanceof EntityInterface => $identity->get('id'),
-            $identity instanceof ArrayAccess, is_array($identity) => $identity['id'] ?? null,
+            $identity instanceof EntityInterface => $identity->get($key),
+            $identity instanceof ArrayAccess, is_array($identity) => $identity[$key] ?? null,
             default => $identity,
         };
         if (!is_scalar($subject) || (string)$subject === '') {
             throw new InvalidArgumentException('Cannot tell the id of this identity.');
         }
-        $owner = $factory->userProvider()->findBySubject((string)$subject);
+        $owner = $provider->findBySubject((string)$subject);
         if ($owner === null) {
             throw new InvalidArgumentException(
                 sprintf('No active person with id "%s" is known to the user provider.', (string)$subject),

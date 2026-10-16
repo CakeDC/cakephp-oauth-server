@@ -34,10 +34,7 @@ final class OrmUserProvider implements UserProviderInterface
     public function findBySubject(string $subject): ?ResourceOwner
     {
         $table = $this->fetchTable((string)$this->config['table']);
-        $key = $table->getPrimaryKey();
-        if (!is_string($key)) {
-            throw new InvalidArgumentException('The users table needs a single-column primary key.');
-        }
+        $key = $this->keyField();
         if (!$this->hasKeyShape($table->getSchema()->getColumnType($key), $subject)) {
             return null;
         }
@@ -57,7 +54,24 @@ final class OrmUserProvider implements UserProviderInterface
         $name = is_string($field) ? $entity->get($field) : null;
         $display = is_scalar($name) && (string)$name !== '' ? (string)$name : $subject;
 
-        return new ResourceOwner((string)$stored, $display, new Identity($entity));
+        // The identity's identifier is the table's key, whatever the column is called.
+        return new ResourceOwner((string)$stored, $display, new Identity($entity, ['fieldMap' => ['id' => $key]]));
+    }
+
+    /**
+     * The primary key column of the users table: the subject of a person is the value of this column.
+     *
+     * @return string
+     * @throws \InvalidArgumentException When the table has no single-column primary key.
+     */
+    public function keyField(): string
+    {
+        $key = $this->fetchTable((string)$this->config['table'])->getPrimaryKey();
+        if (!is_string($key)) {
+            throw new InvalidArgumentException('The users table needs a single-column primary key.');
+        }
+
+        return $key;
     }
 
     /**

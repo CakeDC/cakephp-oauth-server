@@ -14,6 +14,7 @@ use CakeDC\OAuth\Server\Owner\ResourceOwner;
 use CakeDC\OAuth\Server\Owner\SubjectType;
 use CakeDC\OAuth\Server\Owner\UserContextInterface;
 use CakeDC\OAuth\Server\Owner\UserProviderInterface;
+use Closure;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 
@@ -30,12 +31,15 @@ final class SessionUserContext implements UserContextInterface
      * @param array<string, mixed>|string $loginUrl Login page, as for Router::url().
      * @param string $redirectParam Query parameter the login reads the return URL from.
      * @param string $identityAttribute Request attribute holding the identity.
+     * @param \Closure|string $identityKey The key column of the people, read from an identity that is a plain
+     *   array or object and cannot tell its identifier (a Closure is called when needed).
      */
     public function __construct(
         private readonly UserProviderInterface $users,
         private readonly string|array $loginUrl,
         private readonly string $redirectParam = 'redirect',
         private readonly string $identityAttribute = 'identity',
+        private readonly Closure|string $identityKey = 'id',
     ) {
     }
 
@@ -54,7 +58,7 @@ final class SessionUserContext implements UserContextInterface
         $identity = $request->getAttribute($attribute);
         $subject = match (true) {
             $identity instanceof IdentityInterface => $identity->getIdentifier(),
-            $identity instanceof ArrayAccess, is_array($identity) => $identity['id'] ?? null,
+            $identity instanceof ArrayAccess, is_array($identity) => $identity[$this->keyColumn()] ?? null,
             default => null,
         };
         if (!is_int($subject) && !is_string($subject) || (string)$subject === '') {
@@ -63,6 +67,16 @@ final class SessionUserContext implements UserContextInterface
         $owner = $this->users->findBySubject((string)$subject);
 
         return $owner !== null && $owner->type === SubjectType::User ? $owner : null;
+    }
+
+    /**
+     * The key column of the people.
+     *
+     * @return string
+     */
+    private function keyColumn(): string
+    {
+        return $this->identityKey instanceof Closure ? ($this->identityKey)() : $this->identityKey;
     }
 
     /**

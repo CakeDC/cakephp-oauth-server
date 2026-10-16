@@ -27,7 +27,9 @@ under `OAuthServer.userProvider` (see [configuration](configuration.md#userprovi
 
 Rules that follow from the code:
 
-- The table needs a single column primary key. The subject of a token is that key as a string.
+- The table needs a single column primary key, called `id` or anything else (`user_id`, `member_id`). The
+  subject of a token is that key as a string, and the identity handed to your callbacks reports it as its
+  identifier.
 - A person is found only when the finder finds them, so a deactivated person (the `active` finder no
   longer returns them) stops working at once: the consent page asks them to sign in again and their
   existing tokens stop validating.
@@ -164,8 +166,8 @@ object instead of a class name. A class that does not implement the interface th
 
 `SessionUserContext::currentOwner()` reads the identity from the request attribute that your
 authentication service reports (the `identity` attribute unless you renamed it; with no authentication
-service, `OAuthServer.login.identityAttribute`). It takes the identity's identifier, or its `id` field for
-a plain array, and asks the provider for the person again with `findBySubject()`. So an inactive person is
+service, `OAuthServer.login.identityAttribute`). It takes the identity's identifier, or the primary key column of the users table
+for a plain array or entity, and asks the provider for the person again with `findBySubject()`. So an inactive person is
 treated as signed out and gets the login page.
 
 It returns nobody, and so the login page, when:
@@ -175,6 +177,11 @@ It returns nobody, and so the login page, when:
 - the identity is an `OAuthIdentity` (a request authenticated with an OAuth token).
 
 A bearer token is never a browser login: it must not approve clients or mint tokens.
+
+With a users table keyed by another column than `id`, make your authentication service build identities
+that know their identifier, for example `'identityClass' => fn($data) => new Identity($data, ['fieldMap' =>
+['id' => 'user_id']])`, so `getIdentifier()` returns the key. `OAuthTestTrait` reads the same key column from
+an entity or an array you pass to `oauthTokenFor()`.
 
 ## The login URL and the redirect parameter
 

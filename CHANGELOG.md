@@ -9,6 +9,7 @@ First release. An OAuth 2.1 authorization server for CakePHP 5 on top of cakedc/
 - The Token authenticator has a `paths` option (default: the path of its resource) and refuses, with 401, a
   request that carries this server's token anywhere else, so a token for one resource cannot act as the
   person on the rest of the application.
+- People tables keyed by a column other than `id` work: the identity reports the key as its identifier.
 - Routes for the metadata document and the authorize, token, register, revoke, introspect and connections
   endpoints, handled by `OAuthController`.
 - ORM storage (`OrmStorage`) and one migration for `oauth_clients`, `oauth_authorization_codes`,

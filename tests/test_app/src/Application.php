@@ -3,9 +3,11 @@ declare(strict_types=1);
 
 namespace TestApp;
 
+use ArrayAccess;
 use Authentication\AuthenticationService;
 use Authentication\AuthenticationServiceInterface;
 use Authentication\AuthenticationServiceProviderInterface;
+use Authentication\Identity;
 use Authentication\Middleware\AuthenticationMiddleware;
 use Authorization\AuthorizationService;
 use Authorization\AuthorizationServiceInterface;
@@ -85,9 +87,15 @@ class Application extends BaseApplication implements
      */
     public function getAuthenticationService(ServerRequestInterface $request): AuthenticationServiceInterface
     {
-        $service = new AuthenticationService([
-            'identityAttribute' => Configure::read('TestApp.identityAttribute', 'identity'),
-        ]);
+        $config = ['identityAttribute' => Configure::read('TestApp.identityAttribute', 'identity')];
+        $key = Configure::read('TestApp.identityKey');
+        if (is_string($key)) {
+            // A host whose people are keyed by another column than `id`.
+            $config['identityClass'] = fn(array|ArrayAccess $data): Identity => new Identity($data, [
+                'fieldMap' => ['id' => $key],
+            ]);
+        }
+        $service = new AuthenticationService($config);
         // The token comes first: a session cookie must not hide a revoked or foreign bearer token.
         $service->loadAuthenticator('CakeDC/OAuthServer.Token', ['resource' => 'http://localhost/api']);
         $service->loadAuthenticator('Authentication.Session', ['sessionKey' => 'Auth']);
