@@ -22,10 +22,13 @@ use Psr\Http\Message\ServerRequestInterface;
  *
  * A token is for one resource, and that resource lives at its URL: the `paths` option (default: the path of the
  * resource identifier, `/api` for `http://localhost/api`) lists the path prefixes where the authenticator
- * authenticates, matched on segment boundaries. A request that carries this server's token outside them is
- * challenged with 401 and never authenticated, so a token for the API cannot act as the person on the
- * application's session pages. A resource at the host root needs `paths` set explicitly (`['/']` covers every
- * route).
+ * authenticates, matched on segment boundaries. Both the request path and the static part of the template of
+ * the route that matched it must be within them: `/mcp/account/delete` routed by `/{tenant}/account/delete`
+ * is outside `/mcp`, because the router, not the path, decides which action runs. A request that carries this
+ * server's token outside them, or that was not routed yet, is challenged with 401 and never authenticated, so
+ * a token for the API cannot act as the person on a session route that is not below the API's path. Routes
+ * of a resource therefore need a static prefix within its paths. A resource at the host root needs `paths`
+ * set explicitly (`['/']` covers every route).
  *
  * It is stateless: the identity is never persisted, so a bearer request cannot become a browser login.
  */
@@ -128,7 +131,7 @@ class TokenAuthenticator extends AbstractAuthenticator implements StatelessInter
         if ($token === null) {
             return new Result(null, Result::FAILURE_CREDENTIALS_MISSING);
         }
-        if (!RequestPaths::within(RequestPaths::fullPath($request), $this->paths)) {
+        if (!RequestPaths::routedWithin($request, $this->paths)) {
             $this->failure = 'The access token is not valid at this address.';
 
             return new Result(null, Result::FAILURE_CREDENTIALS_INVALID, [$this->failure]);

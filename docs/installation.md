@@ -87,21 +87,34 @@ public function middleware(MiddlewareQueue $middlewareQueue): MiddlewareQueue
 
 - a request to the route prefix (`/oauth` by default) plus `token`, `register`, `revoke` or `introspect`;
 - a request carrying `Authorization: Bearer <token>` where the token starts with this server's own prefix
-  (`<tokenPrefix>_at_` or `<tokenPrefix>_pat_`) **and whose path is below the path of one of your
-  resources**. A token is for one resource and works only where that resource lives, so a bearer
-  authenticated POST to `/api/posts` (resource `https://example.com/api`) or to your MCP route is not
-  rejected with 403, while the same header on `/account/delete` is still CSRF checked. An Authorization
-  header is not an ambient credential: a page on another site cannot make the browser send a valid token.
+  (`<tokenPrefix>_at_` or `<tokenPrefix>_pat_`), **validates** for one of your resources, **and is on the
+  routes of that resource**. So a bearer authenticated POST to `/api/posts` (resource
+  `https://example.com/api`) or to your MCP route is not rejected with 403, while the same header on
+  `/account/delete` is still CSRF checked. An Authorization header is not an ambient credential: a page on
+  another site cannot make the browser send a valid token.
 
-The paths are those of the declared resources (`https://example.com/api` is `/api`, matched on segment
-boundaries: `/api` and `/api/x`, not `/apix`), or the list in `OAuthServer.tokenPaths`
-([configuration](configuration.md#tokenpaths)) when you set it, or the `$paths` argument of
-`csrfSkip($request, $paths)`. A resource at the host root (`https://example.com`) adds no path by
-itself: covering every route takes an explicit `'tokenPaths' => ['/']`. Paths are compared after the
-normalisation the router applies (each segment URL-decoded on its own, a trailing slash ignored, base
-directory included). A path the router and a string comparison could read differently fails closed: one with
-an encoded slash (`%2F`), an empty segment (`//`) or `.` / `..` segments is never skipped, and a token
-presented there is refused.
+"Validates" means the core's token validator accepts it for that resource (without recording a use): a live
+access or personal token. A made up, expired or revoked token with the right prefix, or a token of another
+resource, gets the normal CSRF check, so it cannot carry a session request past CSRF. That costs one token
+lookup per such request.
+
+"On the routes of that resource" is the rule of the Token authenticator
+([protecting-apis](protecting-apis.md#where-a-token-works)): both the request path and the static part of the
+template of the route that matched it must be within the resource's paths. Those are the path of the resource
+(`https://example.com/api` is `/api`, matched on segment boundaries: `/api` and `/api/x`, not `/apix`), or the
+list in `OAuthServer.tokenPaths` ([configuration](configuration.md#tokenpaths)) for every resource when you set
+it, or the `$paths` argument of `csrfSkip($request, $paths)`. A resource at the host root
+(`https://example.com`) adds no path by itself: covering every route takes an explicit
+`'tokenPaths' => ['/']`. A route whose template starts with a placeholder (`/{tenant}/account/delete`) is not
+on the routes of `/api`, even for the URL `/api/account/delete`. Paths are compared after the normalisation the
+router applies (each segment URL-decoded on its own, a trailing slash ignored, base directory included). A path
+the router and a string comparison could read differently fails closed: one with an encoded slash (`%2F`), an
+empty segment (`//`) or `.` / `..` segments is never skipped, and a token presented there is refused.
+
+Add `CsrfProtectionMiddleware` after `RoutingMiddleware`, as above and in the CakePHP application skeleton.
+Before routing there is no matched route, so a bearer request is never skipped there (the client endpoints
+still are). `csrfSkip()` never throws: when the `OAuthServer` configuration cannot be read it skips nothing,
+and when the server cannot be built to validate a token it does not skip that bearer request.
 
 Everything else stays CSRF checked: session routes, requests with no bearer or a foreign one, and the
 consent and connections pages (`<prefix>/authorize` and `<prefix>/connections` are never skipped, even with
@@ -140,9 +153,12 @@ reads the identity from the request attribute of your `cakephp/authentication` s
 default, or the attribute your authentication service reports).
 
 A minimal `getAuthenticationService()`, with a form login and the plugin's token authenticator for your
-API routes. The authenticator accepts a token only below the path of the token's resource (`/api` for
-`https://example.com/api`); anywhere else a request that carries one of this server's tokens is refused with
-401, so a token for your API can never act as the person on your session pages:
+API routes. The authenticator accepts a token only on the routes of the token's resource: the request path and
+the template of the route that matched it must both be below the resource's path (`/api` for
+`https://example.com/api`). Anywhere else a request that carries one of this server's tokens is refused with
+401, so a token for your API cannot act as the person on a session route that is not connected below `/api`
+([where a token works](protecting-apis.md#where-a-token-works)). Load `AuthenticationMiddleware` after
+`RoutingMiddleware`:
 
 ```php
 // src/Application.php

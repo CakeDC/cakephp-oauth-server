@@ -6,7 +6,6 @@ namespace CakeDC\OAuthServer\Test\TestCase\Authenticator;
 use Authentication\Authenticator\AuthenticationRequiredException;
 use Authentication\Identifier\IdentifierCollection;
 use Cake\Core\Configure;
-use Cake\Http\ServerRequest;
 use Cake\TestSuite\IntegrationTestTrait;
 use Cake\TestSuite\TestCase;
 use CakeDC\OAuth\Server\Grant\Pkce;
@@ -14,6 +13,7 @@ use CakeDC\OAuth\Server\Support\Time;
 use CakeDC\OAuthServer\Authenticator\TokenAuthenticator;
 use CakeDC\OAuthServer\OAuthServer;
 use CakeDC\OAuthServer\Test\Support\Fixtures;
+use CakeDC\OAuthServer\Test\Support\Routed;
 use DateTimeImmutable;
 use InvalidArgumentException;
 use Psr\Clock\ClockInterface;
@@ -154,7 +154,7 @@ class TokenAuthenticatorTest extends TestCase
             'resource' => 'http://localhost/api',
             'resourceMetadataUrl' => "https://x.example/a\"b\\c\x01d",
         ]);
-        $request = (new ServerRequest(['url' => '/api/me']))
+        $request = Routed::request('/api/me', '/api/me')
             ->withHeader('Authorization', 'Bearer test_at_' . str_repeat('x', 43));
         $authenticator->authenticate($request);
 
@@ -188,7 +188,7 @@ class TokenAuthenticatorTest extends TestCase
         try {
             $authenticator = new TokenAuthenticator(new IdentifierCollection(), ['resource' => 'http://localhost/api']);
             $authenticate = fn(string $value) => $authenticator->authenticate(
-                (new ServerRequest(['url' => '/api/me']))->withHeader('Authorization', 'Bearer ' . $value),
+                Routed::request('/api/me', '/api/me')->withHeader('Authorization', 'Bearer ' . $value),
             );
             $suffix = str_repeat('x', 43);
             $clock->calls = 0;

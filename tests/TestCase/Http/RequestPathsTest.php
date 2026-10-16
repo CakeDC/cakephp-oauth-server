@@ -6,6 +6,7 @@ namespace CakeDC\OAuthServer\Test\TestCase\Http;
 use Cake\Http\ServerRequest;
 use Cake\TestSuite\TestCase;
 use CakeDC\OAuthServer\Http\RequestPaths;
+use CakeDC\OAuthServer\Test\Support\Routed;
 
 class RequestPathsTest extends TestCase
 {
@@ -57,5 +58,63 @@ class RequestPathsTest extends TestCase
         $this->assertSame('/api/me', RequestPaths::fullPath($request));
         $this->assertSame('/sub/api/me', RequestPaths::fullPath($request->withAttribute('base', '/sub')));
         $this->assertNull(RequestPaths::fullPath(new ServerRequest(['url' => '/a/../b'])));
+    }
+
+    public function testRoutePathIsTheStaticPartOfTheMatchedRouteWithTheBase(): void
+    {
+        $route = fn(string $template, string $base = ''): ?string => RequestPaths::routePath(
+            Routed::request('/x', $template)->withAttribute('base', $base),
+        );
+
+        $this->assertSame('/api/me', $route('/api/me'));
+        $this->assertSame('/api', $route('/api/'));
+        $this->assertSame('/api', $route('/api/**'));
+        $this->assertSame('/api', $route('/api/*'));
+        $this->assertSame('/api', $route('/api/{id}'));
+        $this->assertSame('/api/v1', $route('/api/v1/{controller}/{action}/*'));
+        // A template that starts with a placeholder fixes nothing but the root.
+        $this->assertSame('/', $route('/{tenant}/account/delete'));
+        $this->assertSame('/', $route('/{slug}'));
+        $this->assertSame('/', $route('/{controller}/{action}/*'));
+        $this->assertSame('/', $route('/*'));
+        $this->assertSame('/', $route('/'));
+        // A static part that ends inside a segment fixes only the complete segments before it.
+        $this->assertSame('/', $route('/api-{version}/x'));
+        $this->assertSame('/', $route('/api{suffix}/account/delete'));
+        $this->assertSame('/v1', $route('/v1/api{suffix}'));
+        $this->assertSame('/', $route('/api*'));
+        // The base directory comes first.
+        $this->assertSame('/sub/api', $route('/api/**', '/sub'));
+        $this->assertSame('/sub', $route('/{slug}', '/sub'));
+    }
+
+    public function testRoutePathIsNullBeforeRouting(): void
+    {
+        $this->assertNull(RequestPaths::routePath(new ServerRequest(['url' => '/api/me'])));
+        $this->assertNull(RequestPaths::routePath(
+            (new ServerRequest(['url' => '/api/me']))->withAttribute('route', '/api/me'),
+        ));
+    }
+
+    public function testRoutedWithinNeedsBothThePathAndTheMatchedRoute(): void
+    {
+        $within = fn(string $url, ?string $template, array $prefixes, string $base = ''): bool => RequestPaths::routedWithin(
+            Routed::request($url, $template)->withAttribute('base', $base),
+            $prefixes,
+        );
+
+        $this->assertTrue($within('/api/me', '/api/me', ['/api']));
+        $this->assertTrue($within('/api/deeper/down', '/api/**', ['/api']));
+        // The path looks like the resource's, but the router picked a route that is not below it.
+        $this->assertFalse($within('/api/account/delete', '/{tenant}/account/delete', ['/api']));
+        $this->assertFalse($within('/api', '/{slug}', ['/api']));
+        $this->assertTrue($within('/api/account/delete', '/{tenant}/account/delete', ['/']));
+        // The route is below, the path is not.
+        $this->assertFalse($within('/account/delete', '/api/**', ['/api']));
+        // Not routed yet: nothing is within, not even the root.
+        $this->assertFalse($within('/api/me', null, ['/']));
+        // Both carry the base directory.
+        $this->assertFalse($within('/api/me', '/api/me', ['/api'], '/sub'));
+        $this->assertTrue($within('/api/me', '/api/me', ['/sub/api'], '/sub'));
     }
 }

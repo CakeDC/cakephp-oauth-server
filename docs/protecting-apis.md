@@ -41,7 +41,7 @@ Options of `CakeDC\OAuthServer\Authenticator\TokenAuthenticator`:
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `resource` | `null` | The resource identifier the token must be issued for. `null` is the server's default resource. It must be declared in `OAuthServer.resources`, or the constructor throws `InvalidArgumentException` |
-| `paths` | the path of the resource identifier | Path prefixes where the authenticator authenticates, for example `['/api']`. Matched on segment boundaries (`/api` covers `/api` and `/api/x`, not `/apix`) against the full request path, base directory included, after the router's normalisation (a path with `%2F`, `//` or `.` / `..` segments matches nothing). A resource at the host root (`https://example.com`) needs `paths` set explicitly (`['/']` covers every route), otherwise the constructor throws `InvalidArgumentException` |
+| `paths` | the path of the resource identifier | Path prefixes where the authenticator authenticates, for example `['/api']`. Matched on segment boundaries (`/api` covers `/api` and `/api/x`, not `/apix`), base directory included, after the router's normalisation (a path with `%2F`, `//` or `.` / `..` segments matches nothing). Both the request path and the static part of the template of the route that matched it must be within them ([where a token works](#where-a-token-works)). A resource at the host root (`https://example.com`) needs `paths` set explicitly (`['/']` covers every route), otherwise the constructor throws `InvalidArgumentException` |
 | `header` | `Authorization` | The request header that carries the bearer token |
 | `resourceMetadataUrl` | `null` | URL of the protected resource metadata document (RFC 9728) that your endpoint serves. When set, it is added to the 401 challenge as `resource_metadata` |
 | `skipTwoFactorVerify` | `true` | For `cakedc/users`: a token is not asked for a second factor |
@@ -64,17 +64,40 @@ the token's path it is refused with 401.
 ## Where a token works
 
 A token is for one resource, and that resource lives at its URL (RFC 8707). The authenticator therefore
-authenticates only below its `paths` (by default the path of the `resource`). A request that carries one
-of this server's tokens anywhere else is challenged with 401 (`error="invalid_token"`) and never
-authenticated, even when it also carries a session cookie, so a token for `https://example.com/api`
-cannot act as the person on `/account/delete` or on any other route of your application. Requests without
-one of this server's tokens, or with a foreign one, pass on to your other authenticators as before.
+authenticates only on the routes of that resource, which it tells by two checks against its `paths` (by
+default the path of the `resource`):
 
-Inside its path the token proves who the caller is and which scopes were granted, nothing more: your
-actions still check `OAuthServer::token($request)->hasScope(...)`. CSRF is skipped only below the same
-paths (see [installation](installation.md#csrf)); keep both lists consistent when you set custom `paths`
-by passing the same list to `OAuthServer::csrfSkip($request, $paths)` or by setting
-`OAuthServer.tokenPaths`.
+- the request path, base directory included, is within the paths;
+- the route that matched the request is within them too: the static part of its template (everything
+  before the first `{placeholder}` or `*`, with the base directory in front) must be within the paths.
+  The router, not the URL, decides which action runs, so this is the check that matters for your session
+  pages.
+
+A request that carries one of this server's tokens and fails either check is challenged with 401
+(`error="invalid_token"`, "The access token is not valid at this address") and never authenticated, even
+when it also carries a session cookie. Requests without one of this server's tokens, or with a foreign one,
+pass on to your other authenticators as before.
+
+So a token for `https://example.com/api` can act as the person on a route whose template starts with
+`/api`, and on no other route. Some consequences:
+
+- A route whose template starts with a placeholder (`/{tenant}/account/delete`, `/{lang}/...`, a `/{slug}`
+  catch-all, the fallbacks `/{controller}/{action}/*`) is never on the routes of `/api`, even for the URL
+  `/api/account/delete`. Give the routes of a resource a static prefix within its paths (`/api/{tenant}/...`,
+  not `/{tenant}/api/...`), or the token is refused on them. A static part that ends inside a segment
+  (`/api-{version}`) counts only up to the last complete segment.
+- Everything you connect below the resource's path is part of the resource: a session page at
+  `/api/account/delete` accepts the token. Keep session pages out of your resources' paths.
+- `paths` set to `['/']` accepts the token on every route of the application, session pages included.
+  Only the consent and connections pages still refuse it as a login.
+- Load `RoutingMiddleware` before `AuthenticationMiddleware`, as the CakePHP application skeleton does.
+  Before routing there is no matched route, and every one of this server's tokens is refused with 401.
+
+Inside its routes the token proves who the caller is and which scopes were granted, nothing more: your
+actions still check `OAuthServer::token($request)->hasScope(...)`. CSRF is skipped for a bearer request by
+the same two checks, and only for a token that validates (see [installation](installation.md#csrf)); keep
+both lists consistent when you set custom `paths` by passing the same list to
+`OAuthServer::csrfSkip($request, $paths)` or by setting `OAuthServer.tokenPaths`.
 
 Use one Token authenticator per authentication service. A token carrying this server's prefix but issued
 for a different resource than the authenticator's `resource` is challenged with 401.
@@ -114,9 +137,11 @@ Pragma: no-cache
 
 A bearer authenticated POST, PUT or DELETE to your API route would be rejected by Cake's CSRF middleware,
 because API clients send no CSRF token. `OAuthServer::csrfSkip()` (see [installation](installation.md#csrf))
-returns `true` for requests carrying a bearer token of this server below the path of a resource, so using it
-in `skipCheckCallback()` is enough. Keep CSRF protection on for your session routes and never disable it
-globally: requests with no bearer token, or with a foreign one, are still checked.
+returns `true` for requests carrying a valid bearer token of this server on the routes of its resource, so
+using it in `skipCheckCallback()` is enough. Keep CSRF protection on for your session routes and never
+disable it globally: requests with no bearer token, with a foreign one, or with one of this server's prefix
+that does not validate (expired, revoked, made up) are still checked, and get 403 before the authenticator
+sees them.
 
 ## Reading the token and checking scopes
 

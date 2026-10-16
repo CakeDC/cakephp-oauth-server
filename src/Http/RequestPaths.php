@@ -3,11 +3,12 @@ declare(strict_types=1);
 
 namespace CakeDC\OAuthServer\Http;
 
+use Cake\Routing\Route\Route;
 use Psr\Http\Message\ServerRequestInterface;
 
 /**
  * Path handling for the places the plugin scopes bearer tokens to: the same normalisation the router
- * applies, and prefix matching on segment boundaries.
+ * applies, prefix matching on segment boundaries, and the static part of the route the router matched.
  *
  * @internal
  */
@@ -56,6 +57,48 @@ final class RequestPaths
         $base = $request->getAttribute('base');
 
         return self::normalize((is_string($base) ? $base : '') . $request->getUri()->getPath());
+    }
+
+    /**
+     * The static part of the template of the route that matched $request, with the base directory in front:
+     * what the router decided, where the path only says what the URL looks like.
+     *
+     * A template that starts with a placeholder (`/{tenant}/account/delete`, `/{slug}`, the fallbacks) fixes
+     * nothing but the root, `/`, even when the request path is `/api/account/delete`. When the static part
+     * ends inside a segment (`/api-{version}`, `/api{suffix}`), only the complete segments before it count.
+     *
+     * @param \Psr\Http\Message\ServerRequestInterface $request The request.
+     * @return string|null Normalized; null when the request has no matched route (routing has not run yet).
+     */
+    public static function routePath(ServerRequestInterface $request): ?string
+    {
+        $route = $request->getAttribute('route');
+        if (!$route instanceof Route) {
+            return null;
+        }
+        $static = $route->staticPath();
+        $rest = substr($route->template, strlen($static));
+        if ($rest !== '' && !str_ends_with($static, '/') && !str_starts_with($rest, '/')) {
+            // The static part stops inside a segment, so that segment is not fixed.
+            $static = substr($static, 0, (int)strrpos($static, '/') + 1);
+        }
+        $base = $request->getAttribute('base');
+
+        return self::normalize((is_string($base) ? $base : '') . $static);
+    }
+
+    /**
+     * Whether $request lies within $prefixes both by its path and by the route the router matched for it.
+     * A request without a matched route is never within.
+     *
+     * @param \Psr\Http\Message\ServerRequestInterface $request The request.
+     * @param list<string> $prefixes Normalized prefixes.
+     * @return bool
+     */
+    public static function routedWithin(ServerRequestInterface $request, array $prefixes): bool
+    {
+        return self::within(self::fullPath($request), $prefixes)
+            && self::within(self::routePath($request), $prefixes);
     }
 
     /**

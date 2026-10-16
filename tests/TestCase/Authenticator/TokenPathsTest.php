@@ -3,14 +3,16 @@ declare(strict_types=1);
 
 namespace CakeDC\OAuthServer\Test\TestCase\Authenticator;
 
+use Authentication\Authenticator\AuthenticationRequiredException;
 use Authentication\Identifier\IdentifierCollection;
+use Cake\Console\TestSuite\ConsoleIntegrationTestTrait;
 use Cake\Core\Configure;
-use Cake\Http\ServerRequest;
 use Cake\TestSuite\IntegrationTestTrait;
 use Cake\TestSuite\TestCase;
 use CakeDC\OAuthServer\Authenticator\TokenAuthenticator;
 use CakeDC\OAuthServer\OAuthServer;
 use CakeDC\OAuthServer\Test\Support\Fixtures;
+use CakeDC\OAuthServer\Test\Support\Routed;
 use CakeDC\OAuthServer\TestSuite\OAuthTestTrait;
 use InvalidArgumentException;
 
@@ -19,6 +21,7 @@ use InvalidArgumentException;
  */
 class TokenPathsTest extends TestCase
 {
+    use ConsoleIntegrationTestTrait;
     use IntegrationTestTrait;
     use OAuthTestTrait;
 
@@ -103,6 +106,110 @@ class TokenPathsTest extends TestCase
         $this->assertResponseOk();
     }
 
+    public function testATokenCannotReachASessionRouteWhoseTemplateStartsWithAPlaceholder(): void
+    {
+        // The reviewer's probe: /{tenant}/account/delete matches /mcp/account/delete with tenant "mcp", a path
+        // below the MCP resource. What counts is the route the router picked, and that one is not below /mcp.
+        Configure::write('TestApp.tokenAuthenticator', ['resource' => 'http://localhost/mcp']);
+
+        // No CSRF token: the skip no longer applies, so the CSRF check refuses it first.
+        $this->actAsOAuth(1, ['content:read'], 'http://localhost/mcp');
+        $this->post('/mcp/account/delete', ['x' => '1']);
+        $this->assertResponseCode(403);
+        $this->assertNull(Configure::read('TestApp.accountDeleted'), 'The action must not run.');
+
+        // With a CSRF token: the authenticator refuses it, outside the resource's routes.
+        $this->actAsOAuth(1, ['content:read'], 'http://localhost/mcp');
+        $this->enableCsrfToken();
+        $this->post('/mcp/account/delete', ['x' => '1']);
+        $this->assertResponseCode(401);
+        $this->assertHeaderContains('WWW-Authenticate', 'not valid at this address');
+        $this->assertNull(Configure::read('TestApp.accountDeleted'), 'The action must not run.');
+
+        // A session cookie does not rescue it either.
+        $this->session(['Auth' => ['id' => 1]]);
+        $this->actAsOAuth(1, ['content:read'], 'http://localhost/mcp');
+        $this->enableCsrfToken();
+        $this->post('/mcp/account/delete', ['x' => '1']);
+        $this->assertResponseCode(401);
+        $this->assertNull(Configure::read('TestApp.accountDeleted'), 'The action must not run.');
+    }
+
+    public function testPathsAtTheRootStillCoverARouteThatStartsWithAPlaceholder(): void
+    {
+        // Accepting the token everywhere is explicit, and then it is accepted on such a route too.
+        Configure::write('TestApp.tokenAuthenticator', ['resource' => 'http://localhost/mcp', 'paths' => ['/']]);
+        Configure::write('OAuthServer.tokenPaths', ['/']);
+        OAuthServer::reset();
+        $this->actAsOAuth(1, ['content:read'], 'http://localhost/mcp');
+
+        $this->post('/mcp/account/delete', ['x' => '1']);
+
+        $this->assertResponseOk();
+        $this->assertResponseContains('deleted 1');
+    }
+
+    public function testAValidTokenInsideItsPathsStillSkipsCsrf(): void
+    {
+        $this->actAsOAuth(1, ['api'], 'http://localhost/api');
+
+        $this->post('/api/deeper/down', ['x' => '1']);
+
+        $this->assertResponseOk();
+        $this->assertResponseContains('"id":1');
+    }
+
+    public function testATokenWithTheServersPrefixThatDoesNotValidateGetsTheCsrfCheck(): void
+    {
+        // The session comes first here, so the session would run the action if CSRF let the request through.
+        Configure::write('TestApp.sessionFirst', true);
+        Configure::write('OAuthServer.tokenPaths', ['/']);
+        OAuthServer::reset();
+        $this->session(['Auth' => ['id' => 1]]);
+        $this->withOAuthToken('test_at_' . str_repeat('x', 43));
+
+        $this->post('/account/delete', ['x' => '1']);
+
+        $this->assertResponseCode(403);
+        $this->assertNull(Configure::read('TestApp.accountDeleted'), 'The action must not run.');
+
+        // A revoked token is no better.
+        $token = $this->oauthTokenFor(1, ['api'], 'http://localhost/api');
+        $this->exec('oauth token revoke --subject 1');
+        $this->session(['Auth' => ['id' => 1]]);
+        $this->withOAuthToken($token);
+        $this->post('/account/delete', ['x' => '1']);
+        $this->assertResponseCode(403);
+        $this->assertNull(Configure::read('TestApp.accountDeleted'), 'The action must not run.');
+    }
+
+    public function testTheRouteThatMatchedMustBeBelowThePathsToo(): void
+    {
+        $authenticator = new TokenAuthenticator(new IdentifierCollection(), ['resource' => 'http://localhost/mcp']);
+        $token = $this->oauthTokenFor(1, ['content:read'], 'http://localhost/mcp');
+        $at = fn(string $url, ?string $template): bool => $authenticator->authenticate(
+            Routed::request($url, $template)->withHeader('Authorization', 'Bearer ' . $token),
+        )->isValid();
+
+        $this->assertTrue($at('/mcp', '/mcp'));
+        $this->assertTrue($at('/mcp/tools/call', '/mcp/**'));
+        $this->assertTrue($at('/mcp/items/7', '/mcp/items/{id}'));
+        $this->assertFalse($at('/mcp/account/delete', '/{tenant}/account/delete'));
+        $this->assertFalse($at('/mcp', '/{slug}'));
+        $this->assertFalse($at('/mcp/x', '/{controller}/{action}/*'));
+        $this->assertFalse($at('/mcp-x/y', '/mcp-{v}/y'));
+        // Authentication before routing: there is no route yet, so the token is outside.
+        $this->assertFalse($at('/mcp', null));
+        $request = Routed::request('/mcp', null)->withHeader('Authorization', 'Bearer ' . $token);
+        $authenticator->authenticate($request);
+        try {
+            $authenticator->unauthorizedChallenge($request);
+            $this->fail('A challenge was expected.');
+        } catch (AuthenticationRequiredException $e) {
+            $this->assertStringContainsString('not valid at this address', $e->getHeaders()['WWW-Authenticate']);
+        }
+    }
+
     public function testAnEncodedSlashCannotSmuggleARouteIntoThePath(): void
     {
         foreach (['/api%2Fx/account/delete', '/api%2fx/account/delete'] as $path) {
@@ -167,8 +274,9 @@ class TokenPathsTest extends TestCase
             'paths' => ['/account', '/api/v2/'],
         ]);
         $token = $this->oauthTokenFor(1, ['api'], 'http://localhost/api');
+        // Each path is matched by a static route of its own.
         $at = fn(string $url): bool => $authenticator->authenticate(
-            (new ServerRequest(['url' => $url]))->withHeader('Authorization', 'Bearer ' . $token),
+            Routed::request($url, $url)->withHeader('Authorization', 'Bearer ' . $token),
         )->isValid();
 
         $this->assertTrue($at('/account/delete'));
@@ -181,7 +289,7 @@ class TokenPathsTest extends TestCase
     {
         $authenticator = new TokenAuthenticator(new IdentifierCollection(), ['resource' => 'http://localhost/api']);
         $token = $this->oauthTokenFor(1, ['api'], 'http://localhost/api');
-        $request = (new ServerRequest(['url' => '/api/me']))->withHeader('Authorization', 'Bearer ' . $token);
+        $request = Routed::request('/api/me', '/api/me')->withHeader('Authorization', 'Bearer ' . $token);
 
         $this->assertTrue($authenticator->authenticate($request)->isValid());
         // The same routed path under /sub is /sub/api/me, which is not the resource's path /api.
@@ -192,8 +300,9 @@ class TokenPathsTest extends TestCase
     {
         $authenticator = new TokenAuthenticator(new IdentifierCollection(), ['resource' => 'http://localhost/api']);
         $token = $this->oauthTokenFor(1, ['api'], 'http://localhost/api');
+        // The router would pick the API's catch-all route: only the path decides here.
         $at = fn(string $url): bool => $authenticator->authenticate(
-            (new ServerRequest(['url' => $url]))->withHeader('Authorization', 'Bearer ' . $token),
+            Routed::request($url, '/api/**')->withHeader('Authorization', 'Bearer ' . $token),
         )->isValid();
 
         $this->assertTrue($at('/%61pi/me'), 'Percent-encoding is decoded like the router does.');
@@ -221,7 +330,8 @@ class TokenPathsTest extends TestCase
 
         $authenticator = new TokenAuthenticator(new IdentifierCollection(), ['paths' => ['/']]);
         $token = $this->oauthTokenFor(1, ['all'], 'http://localhost');
-        $request = (new ServerRequest(['url' => '/account/delete']))->withHeader('Authorization', 'Bearer ' . $token);
+        $request = Routed::request('/account/delete', '/{tenant}/account/delete')
+            ->withHeader('Authorization', 'Bearer ' . $token);
         $this->assertTrue($authenticator->authenticate($request)->isValid());
     }
 

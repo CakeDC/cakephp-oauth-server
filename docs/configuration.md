@@ -137,17 +137,21 @@ Used only with `CakeDC/Users`.
 | `users.resource` | string | the server's default resource | The resource the integration's token authenticator validates against |
 | `users.paths` | list of strings | `tokenPaths`, else the path of the resource | The path prefixes where the integration's token authenticator authenticates. Set `tokenPaths` to the same list so `OAuthServer::csrfSkip()` skips CSRF in the same places |
 
-The authenticator accepts a token only below those paths, and scope checks inside them are your job. See
-[cakedc-users](cakedc-users.md).
+The authenticator accepts a token only on routes below those paths (the request path and the template of the
+matched route), and scope checks inside them are your job. See [cakedc-users](cakedc-users.md) and
+[protecting-apis](protecting-apis.md#where-a-token-works).
 
 ### `tokenPaths`
 
 A list of path prefixes (`['/api', '/mcp']`) where bearer tokens of this server are expected. Optional.
-`OAuthServer::csrfSkip()` skips CSRF for a bearer request only below these paths, and the cakedc/users
-integration authenticates only below them when `users.paths` is not set. Default: the paths of the declared
+`OAuthServer::csrfSkip()` skips CSRF for a bearer request only when its token validates and the request is on
+routes below these paths, and the cakedc/users integration authenticates only there when `users.paths` is not
+set. Default: the paths of the declared
 `resources`, where a resource at the host root contributes nothing. Set `['/']` to make tokens work on every
 route; that is a deliberate choice, never a default. Prefixes match on segment boundaries (`/api` covers
-`/api/x`, not `/apix`) and are compared with the full request path, base directory included. If you set
+`/api/x`, not `/apix`) and are compared with the full request path and with the static part of the matched
+route's template, base directory included ([where a token works](protecting-apis.md#where-a-token-works)).
+If you set
 custom `paths` on your own Token authenticator, set `tokenPaths` to the same list (or pass it to
 `csrfSkip($request, $paths)`).
 

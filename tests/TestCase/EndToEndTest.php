@@ -367,6 +367,70 @@ class EndToEndTest extends TestCase
         $this->assertResponseNotContains('wants to access');
     }
 
+    public function testAValidTokenAcceptedOnEveryRouteIsStillNoLoginOnTheSessionPages(): void
+    {
+        // A host whose Token authenticator covers every route: the token validates at /oauth/authorize and
+        // /oauth/connections, so only the pages themselves stand between it and a browser login.
+        Configure::write('TestApp.tokenAuthenticator', ['resource' => 'http://localhost/api', 'paths' => ['/']]);
+        Configure::write('OAuthServer.tokenPaths', ['/']);
+        OAuthServer::reset();
+        $token = $this->oauthTokenFor(1, [], 'http://localhost/api');
+        $client = OAuthServer::server()->clientRegistrar()
+            ->create('App', ['https://app.example.com/cb'], false)['client'];
+        $query = $this->authorizeQuery($client->clientId, 'https://app.example.com/cb');
+
+        // The consent page: the token is accepted here, and the person is still sent to the login.
+        $this->withOAuthToken($token);
+        $this->get('/oauth/authorize?' . $query);
+        $this->assertResponseCode(302);
+        $this->assertStringStartsWith('/login?redirect=', $this->_response->getHeaderLine('Location'));
+        $this->assertResponseNotContains('wants to access');
+
+        // Approving with valid fields (taken from a real session) and the token: no code, no consent.
+        $this->_request = [];
+        $this->session(['Auth' => ['id' => 1]]);
+        $this->get('/oauth/authorize?' . $query);
+        $this->assertResponseOk();
+        $fields = Html::hiddenFields((string)$this->_response->getBody(), 'consent_token');
+        unset($fields['_csrfToken']);
+        $this->withOAuthToken($token);
+        $this->enableCsrfToken();
+        $this->post('/oauth/authorize', $fields + ['decision' => 'approve']);
+        $this->assertStringNotContainsString('code=', $this->_response->getHeaderLine('Location'));
+        $this->assertResponseContains('Your session ended');
+        $this->assertSame([], $this->fetchTable('CakeDC/OAuthServer.OauthConsents')->find()->all()->toArray());
+        $this->assertSame(0, $this->fetchTable('CakeDC/OAuthServer.OauthAuthorizationCodes')->find()->count());
+
+        // The connections page: the token is accepted here, and the person is still sent to the login.
+        $this->_request = [];
+        $this->_session = [];
+        $this->withOAuthToken($token);
+        $this->get('/oauth/connections');
+        $this->assertResponseCode(302);
+        $this->assertStringStartsWith('/login?redirect=', $this->_response->getHeaderLine('Location'));
+        $this->assertResponseNotContains('Connected applications');
+
+        // Creating a personal token with a valid form and the token: nothing is created.
+        $this->_request = [];
+        $this->session(['Auth' => ['id' => 1]]);
+        $this->get('/oauth/connections');
+        $this->assertResponseOk();
+        $fields = Html::hiddenFields((string)$this->_response->getBody(), 'form_token');
+        $before = $this->fetchTable('CakeDC/OAuthServer.OauthTokens')->find()->count();
+        $this->withOAuthToken($token);
+        $this->enableCsrfToken();
+        $this->post('/oauth/connections', [
+            'form_token' => $fields['form_token'],
+            'action' => 'create_token',
+            'name' => 'Minted with a bearer token',
+            'resource' => 'http://localhost/api',
+            'scope:api' => '1',
+            'days' => '7',
+        ]);
+        $this->assertSame(0, preg_match('/test_pat_[A-Za-z0-9_-]{43}/', (string)$this->_response->getBody()));
+        $this->assertSame($before, $this->fetchTable('CakeDC/OAuthServer.OauthTokens')->find()->count());
+    }
+
     public function testPersonalTokensSwitchedOffStillListAndRevoke(): void
     {
         $token = $this->oauthTokenFor(1, [], 'http://localhost/api');

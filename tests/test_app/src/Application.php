@@ -76,7 +76,8 @@ class Application extends BaseApplication implements
             $builder->connect('/api/**', ['controller' => 'Pages', 'action' => 'me']);
             $builder->connect('/apix/**', ['controller' => 'Pages', 'action' => 'me']);
             // A session route that changes state.
-            // Routes whose first segment is a free parameter: an encoded slash must not reach them as a path.
+            // Routes whose first segment is a free parameter: an encoded slash must not reach them as a path,
+            // and a path that looks like a resource's (/mcp/account/delete) must not carry its token there.
             $builder->connect('/{tenant}/account/delete', ['controller' => 'Pages', 'action' => 'deleteAccount']);
             $builder->connect('/{slug}', ['controller' => 'Pages', 'action' => 'deleteAccount'])
                 ->setPatterns(['slug' => '[^/]+']);
@@ -100,8 +101,17 @@ class Application extends BaseApplication implements
             ]);
         }
         $service = new AuthenticationService($config);
+        // Tests may point the authenticator at another resource or give it other paths.
+        $token = (array)Configure::read('TestApp.tokenAuthenticator', ['resource' => 'http://localhost/api']);
+        if (Configure::read('TestApp.sessionFirst') === true) {
+            // A host that got the order wrong: the session is tried before the token.
+            $service->loadAuthenticator('Authentication.Session', ['sessionKey' => 'Auth']);
+            $service->loadAuthenticator('CakeDC/OAuthServer.Token', $token);
+
+            return $service;
+        }
         // The token comes first: a session cookie must not hide a revoked or foreign bearer token.
-        $service->loadAuthenticator('CakeDC/OAuthServer.Token', ['resource' => 'http://localhost/api']);
+        $service->loadAuthenticator('CakeDC/OAuthServer.Token', $token);
         $service->loadAuthenticator('Authentication.Session', ['sessionKey' => 'Auth']);
 
         return $service;

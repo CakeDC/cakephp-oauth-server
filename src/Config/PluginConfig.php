@@ -41,6 +41,8 @@ final class PluginConfig
 
     private ?ServerConfig $serverConfig = null;
 
+    private ?ServerConfig $pathConfig = null;
+
     /**
      * @param array<string, mixed> $settings The `OAuthServer` configuration.
      */
@@ -101,20 +103,42 @@ final class PluginConfig
     }
 
     /**
+     * The core settings with a fixed placeholder secret, for what does not depend on the secret: paths,
+     * prefixes and resources. The core only exposes them on a ServerConfig; the placeholder is used for
+     * reading them alone and never reaches a token or a signature.
+     *
+     * @return \CakeDC\OAuth\Server\Config\ServerConfig
+     * @throws \InvalidArgumentException For an invalid issuer, route prefix or resource setting.
+     */
+    private function pathConfig(): ServerConfig
+    {
+        return $this->pathConfig ??= $this->buildServerConfig(str_repeat('x', 32));
+    }
+
+    /**
      * The route prefix and the metadata path, validated by the core without touching the secret.
      *
      * Routing must not depend on the secret, so a missing or weak `Security.salt` cannot break boot.
-     * The core only exposes the paths on a ServerConfig, so one is built with a fixed placeholder secret
-     * that is used for path computation alone and never reaches a token or a signature.
      *
      * @return array{prefix: string, metadata: string}
      * @throws \InvalidArgumentException For an invalid issuer, route prefix or resource setting.
      */
     public function routing(): array
     {
-        $server = $this->buildServerConfig(str_repeat('x', 32));
+        $server = $this->pathConfig();
 
         return ['prefix' => $server->routePrefix, 'metadata' => $server->metadataPath()];
+    }
+
+    /**
+     * The prefix of the tokens this server issues, validated without touching the secret.
+     *
+     * @return string
+     * @throws \InvalidArgumentException
+     */
+    public function tokenPrefix(): string
+    {
+        return $this->pathConfig()->tokenPrefix;
     }
 
     /**
@@ -125,7 +149,7 @@ final class PluginConfig
      */
     public function issuer(): string
     {
-        return $this->buildServerConfig(str_repeat('x', 32))->issuer;
+        return $this->pathConfig()->issuer;
     }
 
     /**
@@ -308,11 +332,12 @@ final class PluginConfig
     }
 
     /**
-     * Where a bearer token of this server is expected, which is where CSRF protection is skipped for it:
-     * `OAuthServer.tokenPaths` when set, otherwise the paths of the declared resources. A resource at the host
-     * root contributes nothing: covering every route takes an explicit `OAuthServer.tokenPaths = ['/']`.
+     * Where a bearer token of this server is expected: `OAuthServer.tokenPaths` when set, otherwise the paths
+     * of the declared resources. A resource at the host root contributes nothing: covering every route takes
+     * an explicit `OAuthServer.tokenPaths = ['/']`.
      *
      * @return list<string>
+     * @throws \InvalidArgumentException For an invalid resource or `tokenPaths` setting.
      */
     public function bearerPaths(): array
     {
@@ -320,15 +345,28 @@ final class PluginConfig
         if ($configured !== null) {
             return $configured;
         }
+
+        return array_values(array_unique(array_merge(...array_values($this->resourcePaths()))));
+    }
+
+    /**
+     * Where a bearer token of each declared resource is expected, which is where CSRF protection is skipped
+     * for it: `OAuthServer.tokenPaths` for every resource when set, otherwise the path of the resource itself.
+     * A resource at the host root gets no path by itself. Read without touching the secret.
+     *
+     * @return array<string, list<string>> Path prefixes by resource identifier.
+     * @throws \InvalidArgumentException For an invalid resource or `tokenPaths` setting.
+     */
+    public function resourcePaths(): array
+    {
+        $configured = $this->tokenPaths();
         $paths = [];
-        foreach ($this->serverConfig()->resources->all() as $resource) {
+        foreach ($this->pathConfig()->resources->all() as $resource) {
             $path = RequestPaths::ofResource($resource->identifier);
-            if ($path !== '/') {
-                $paths[] = $path;
-            }
+            $paths[$resource->identifier] = $configured ?? ($path === '/' ? [] : [$path]);
         }
 
-        return array_values(array_unique($paths));
+        return $paths;
     }
 
     /**
@@ -339,7 +377,7 @@ final class PluginConfig
      */
     public function defaultResourceIdentifier(): string
     {
-        return $this->buildServerConfig(str_repeat('x', 32))->resources->defaultResource()->identifier;
+        return $this->pathConfig()->resources->defaultResource()->identifier;
     }
 
     /**

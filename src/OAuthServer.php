@@ -14,6 +14,7 @@ use CakeDC\OAuthServer\Http\RequestPaths;
 use CakeDC\OAuthServer\Identity\OAuthIdentity;
 use CakeDC\OAuthServer\Server\ServerFactory;
 use Psr\Http\Message\ServerRequestInterface;
+use Throwable;
 
 /**
  * Static entry point of the plugin for code that has no container at hand.
@@ -58,22 +59,49 @@ final class OAuthServer
 
     /**
      * Whether $request needs no CSRF token: it goes to an endpoint OAuth clients call (token, register,
-     * revoke, introspect), or it carries a bearer token of this server (`<prefix>_at_` or `<prefix>_pat_`)
-     * and its path is where such a token is accepted. Use it in CsrfProtectionMiddleware::skipCheckCallback().
+     * revoke, introspect), or it carries a valid bearer token of this server where that token is accepted.
+     * Use it in CsrfProtectionMiddleware::skipCheckCallback(), with RoutingMiddleware before that middleware.
      *
      * An Authorization header is not an ambient credential: a page on another site cannot make the browser
-     * attach a valid token. But a token is only honoured below its resource's path (see TokenAuthenticator), so
-     * the skip applies there alone: by default the paths of the declared resources, or `OAuthServer.tokenPaths`,
-     * or $paths. The consent and connections pages are session pages and are never skipped, with or without a
-     * bearer token; paths are compared after the normalisation the router applies, and a path with `%2F`, an
-     * empty segment or `.` / `..` segments is never skipped. Requests without a bearer token, or with a foreign one, stay checked.
+     * attach a valid token. So a request skips the check for its bearer token only when all of this holds:
+     *
+     * - the token has this server's access or personal prefix (`<prefix>_at_`, `<prefix>_pat_`) and validates
+     *   (the core's TokenValidator, without recording a use) for a declared resource; a garbage, expired or
+     *   revoked token with the right prefix is CSRF checked like any other request;
+     * - that resource's token paths cover the request: by default the path of the resource, or
+     *   `OAuthServer.tokenPaths` for every resource, or $paths. A resource at the host root has no path of its own;
+     * - both the request path and the static part of the template of the route that matched it are within those
+     *   paths (see TokenAuthenticator); a request that was not routed yet (CSRF middleware before
+     *   RoutingMiddleware) is never skipped for a bearer token.
+     *
+     * The consent and connections pages are session pages and are never skipped, with or without a bearer token.
+     * Paths are compared after the normalisation the router applies, and a path with `%2F`, an empty segment or
+     * `.` / `..` segments is never skipped. When the configuration cannot be read or the server cannot be built,
+     * nothing is skipped and no error escapes.
      *
      * @param \Psr\Http\Message\ServerRequestInterface $request The request.
-     * @param list<string>|null $paths Path prefixes where a bearer token is accepted, when the application's
-     *   Token authenticator uses custom `paths`; null for the configured ones.
+     * @param list<string>|null $paths Path prefixes where a bearer token of any declared resource is accepted, when
+     *   the application's Token authenticator uses custom `paths`; null for the configured ones.
      * @return bool
      */
     public static function csrfSkip(ServerRequestInterface $request, ?array $paths = null): bool
+    {
+        try {
+            return self::skipsCsrf($request, $paths);
+        } catch (Throwable) {
+            // A broken configuration, a server that cannot be built or a failing lookup never skips the check.
+            return false;
+        }
+    }
+
+    /**
+     * csrfSkip(), allowed to throw.
+     *
+     * @param \Psr\Http\Message\ServerRequestInterface $request The request.
+     * @param list<string>|null $paths Path prefixes, or null for the configured ones.
+     * @return bool
+     */
+    private static function skipsCsrf(ServerRequestInterface $request, ?array $paths): bool
     {
         $config = PluginConfig::fromConfigure();
         $prefix = $config->routePrefix();
@@ -91,31 +119,51 @@ final class OAuthServer
                 return false;
             }
         }
-        if (!self::hasOwnBearer($request)) {
+        $token = self::bearerToken($request);
+        if ($token === null) {
+            return false;
+        }
+        $own = $config->tokenPrefix();
+        if (!str_starts_with($token, $own . '_at_') && !str_starts_with($token, $own . '_pat_')) {
             return false;
         }
         if ($paths !== null) {
             $paths = array_values(array_filter(array_map(RequestPaths::normalize(...), $paths), 'is_string'));
         }
+        $resources = [];
+        foreach ($config->resourcePaths() as $resource => $resourcePaths) {
+            if (RequestPaths::routedWithin($request, $paths ?? $resourcePaths)) {
+                $resources[] = $resource;
+            }
+        }
+        if ($resources === []) {
+            return false;
+        }
+        // Only now is the server needed: a request without such a token never builds it.
+        $validator = self::server()->tokenValidator();
+        foreach ($resources as $resource) {
+            if ($validator->validate($token, $resource, false) instanceof ValidatedToken) {
+                return true;
+            }
+        }
 
-        return RequestPaths::within(RequestPaths::fullPath($request), $paths ?? $config->bearerPaths());
+        return false;
     }
 
     /**
-     * Whether the Authorization header is a bearer token with this server's access or personal prefix.
+     * The bearer token of the Authorization header, or null.
      *
      * @param \Psr\Http\Message\ServerRequestInterface $request The request.
-     * @return bool
+     * @return string|null
      */
-    private static function hasOwnBearer(ServerRequestInterface $request): bool
+    private static function bearerToken(ServerRequestInterface $request): ?string
     {
         $header = $request->getHeaderLine('Authorization');
         if (preg_match('/^Bearer +([A-Za-z0-9\-._~+\/]+=*) *\z/i', $header, $matches) !== 1) {
-            return false;
+            return null;
         }
-        $prefix = self::server()->config()->tokenPrefix;
 
-        return str_starts_with($matches[1], $prefix . '_at_') || str_starts_with($matches[1], $prefix . '_pat_');
+        return $matches[1];
     }
 
     /**

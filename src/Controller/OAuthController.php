@@ -101,8 +101,14 @@ class OAuthController extends Controller
         $response = $this->dispatchTo(
             fn(AuthorizationServer $server): RequestHandlerInterface => $server->connectionsHandler(),
         );
+        // After an action the core sends the person back to the page (303) with an application-relative path,
+        // which needs the base directory. The login redirect (302) was built with Router::url() and has it.
         $location = $response->getHeaderLine('Location');
-        if (str_starts_with($location, '/') && !str_starts_with($location, '//')) {
+        if (
+            $response->getStatusCode() === 303
+            && str_starts_with($location, '/')
+            && !str_starts_with($location, '//')
+        ) {
             $response = $response->withHeader('Location', Router::url($location));
         }
 

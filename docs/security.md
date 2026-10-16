@@ -8,15 +8,18 @@ and never relaxes what it enforces. This page lists what the plugin adds and wha
 ## What the plugin adds
 
 - **Cake's CSRF stays on the consent and connections forms.** By `OAuthServer::csrfSkip()` only the token,
-  register, revoke and introspect endpoints, and bearer requests below a resource's path (see the next
-  point), are skipped, because those clients cannot send a token. The forms are built with `FormHelper`; a template override must do the same
+  register, revoke and introspect endpoints, and requests with a bearer token that validates on the routes
+  of its resource (see the next point), are skipped, because those clients cannot send a token. A token
+  with this server's prefix that does not validate gets the normal CSRF check. The forms are built with `FormHelper`; a template override must do the same
   ([pages](pages.md#forms-and-csrf)). The core also signs the forms with `OAuthServer.secret`.
-- **A token works only below its resource's path.** The Token authenticator authenticates a token only
-  under the path of the resource it was issued for (`/api` for `https://example.com/api`, or its `paths`
-  option); anywhere else a request carrying this server's token is refused with 401, and
-  `OAuthServer::csrfSkip()` skips CSRF for a bearer request only below the same paths. A consented token
-  therefore cannot act as the person on your session pages. Inside the path your actions still check
-  scopes ([protecting-apis](protecting-apis.md#where-a-token-works)).
+- **A token works only on the routes of its resource.** The Token authenticator authenticates a token only
+  when both the request path and the static part of the template of the route that matched it are below
+  the path of the resource it was issued for (`/api` for `https://example.com/api`, or its `paths` option);
+  anywhere else a request carrying this server's token is refused with 401, and `OAuthServer::csrfSkip()`
+  skips CSRF for a bearer request only by the same rule. A consented token therefore cannot act as the person
+  on a session page whose route is not connected below the resource's path, including routes that start with
+  a placeholder (`/{tenant}/...`). What you connect below that path is part of the resource, and inside it
+  your actions still check scopes ([protecting-apis](protecting-apis.md#where-a-token-works)).
 - **A bearer token is never a browser login.** The consent and connections pages accept a session login
   only. Stateless authenticators (Token, HttpBasic, JWT, ...) and impersonation are refused, so a token
   cannot approve a client or mint tokens.
@@ -67,8 +70,9 @@ Events (the audit trail) are described in [events](events.md).
 - **Introspection is a privilege.** `allowIntrospection` lets a client learn about any token of its
   resource; grant it only to resource servers you trust.
 - **Check scopes on your routes.** Without `users.resource` the authenticator accepts default-resource
-  tokens below the default resource's path; check `OAuthServer::token($request)->hasScope()` where it
-  matters. Think twice before setting `paths` or `tokenPaths` to `['/']`: it makes tokens work on every route.
+  tokens on the routes below the default resource's path; check `OAuthServer::token($request)->hasScope()`
+  where it matters. Keep session pages out of your resources' paths. Think twice before setting `paths` or
+  `tokenPaths` to `['/']`: it makes tokens work on every route.
 - **Do not run the endpoints inside a request-wide transaction** ([deployment](deployment.md#database)).
 - **Listeners must not throw** ([events](events.md#rules-for-listeners)).
 

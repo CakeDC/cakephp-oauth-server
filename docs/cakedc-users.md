@@ -39,9 +39,10 @@ Notes:
   cannot make the request run as the session user.
 - If `Auth.Authenticators.OAuthServerToken` is already set, the plugin leaves it alone.
 - Set `OAuthServer.users.resource` to the resource your API routes belong to. Without it the authenticator
-  validates tokens of the default resource. Either way a token works only below its resource's path
-  (`/api` for `https://example.com/api`): on cakedc/users pages such as `/profile` or `/logout` a request
-  carrying this server's token is refused with 401 and never reaches the controller. Inside the path,
+  validates tokens of the default resource. Either way a token works only on the routes of its resource,
+  whose path and route template are below the resource's path (`/api` for `https://example.com/api`): on
+  cakedc/users pages such as `/profile` or `/logout` a request carrying this server's token is refused with
+  401 and never reaches the controller. Inside the path,
   checking scopes is your job: `OAuthServer::token($request)->hasScope('content:read')`. A resource at the
   host root (the default resource included) needs `OAuthServer.users.paths` (or `OAuthServer.tokenPaths`) set explicitly. See
   [protecting-apis](protecting-apis.md).

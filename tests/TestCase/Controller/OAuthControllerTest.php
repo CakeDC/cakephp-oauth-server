@@ -363,6 +363,28 @@ class OAuthControllerTest extends TestCase
         $this->assertHeader('Location', '/app/oauth/connections');
     }
 
+    public function testUnderABasePathAnAnonymousVisitToTheConnectionsPageGoesToTheLoginOnce(): void
+    {
+        Configure::write('App.base', '/app');
+
+        $this->get('/oauth/connections?tab=tokens');
+
+        // The login URL carries the base once; the return URL stays application-relative.
+        $this->assertResponseCode(302);
+        $this->assertHeader('Location', '/app/login?redirect=%2Foauth%2Fconnections%3Ftab%3Dtokens');
+    }
+
+    public function testUnderABasePathTheClientEndpointsNeedNoCsrfToken(): void
+    {
+        Configure::write('App.base', '/app');
+        $this->configRequest(['headers' => ['Content-Type' => 'application/x-www-form-urlencoded']]);
+
+        $this->post('/oauth/revoke', ['token' => 'unknown', 'client_id' => $this->client->clientId]);
+
+        // The core answers (RFC 7009: 200 for an unknown token), not the CSRF check (403).
+        $this->assertResponseOk();
+    }
+
     public function testPersonalTokenWithADottedScopeFromARawBody(): void
     {
         $this->configure([

@@ -7,13 +7,21 @@ use Cake\Core\Configure;
 use Cake\Core\Container;
 use Cake\Http\ServerRequest;
 use Cake\TestSuite\TestCase;
+use Cake\Utility\Security;
 use CakeDC\OAuth\Server\AuthorizationServer;
 use CakeDC\OAuthServer\OAuthServer;
 use CakeDC\OAuthServer\OAuthServerPlugin;
 use CakeDC\OAuthServer\Storage\OrmStorage;
+use CakeDC\OAuthServer\Test\Support\Fixtures;
+use CakeDC\OAuthServer\Test\Support\Routed;
+use CakeDC\OAuthServer\TestSuite\OAuthTestTrait;
 
 class OAuthServerTest extends TestCase
 {
+    use OAuthTestTrait;
+
+    protected array $fixtures = Fixtures::ALL;
+
     /**
      * @var string
      */
@@ -81,6 +89,32 @@ class OAuthServerTest extends TestCase
     }
 
     /**
+     * A POST to $path, routed by $template (the path itself when empty; not routed when null).
+     *
+     * @param string $path The path.
+     * @param string|null $token The bearer token, or null for none.
+     * @param string|null $template The template of the matched route.
+     * @param string $base The base directory.
+     * @param array<string, string> $environment More environment.
+     * @return \Cake\Http\ServerRequest
+     */
+    private function post(
+        string $path,
+        ?string $token = null,
+        ?string $template = '',
+        string $base = '',
+        array $environment = [],
+    ): ServerRequest {
+        $environment += ['REQUEST_METHOD' => 'POST'];
+        if ($token !== null) {
+            $environment += ['HTTP_AUTHORIZATION' => 'Bearer ' . $token];
+        }
+
+        return Routed::request($path, $template === '' ? $path : $template, ['environment' => $environment])
+            ->withAttribute('base', $base);
+    }
+
+    /**
      * @return void
      */
     public function testCsrfSkipCoversTheEndpointsClientsCall(): void
@@ -89,6 +123,8 @@ class OAuthServerTest extends TestCase
 
         foreach (['/oauth/token', '/oauth/register', '/oauth/revoke', '/oauth/introspect'] as $path) {
             $this->assertTrue(OAuthServer::csrfSkip($request($path)), $path);
+            // CSRF middleware placed before routing: the endpoints are still skipped.
+            $this->assertTrue(OAuthServer::csrfSkip($this->post($path, null, null)), $path);
         }
         foreach (['/oauth/authorize', '/oauth/connections', '/oauth/token/x', '/token', '/login'] as $path) {
             $this->assertFalse(OAuthServer::csrfSkip($request($path)), $path);
@@ -102,28 +138,93 @@ class OAuthServerTest extends TestCase
     /**
      * @return void
      */
-    public function testCsrfSkipCoversRequestsWithABearerTokenOfThisServer(): void
+    public function testCsrfSkipCoversTheEndpointsUnderABasePath(): void
     {
-        $post = fn(string $path, array $headers = [], array $cookies = []): ServerRequest => new ServerRequest([
-            'url' => $path,
-            'environment' => ['REQUEST_METHOD' => 'POST'] + $headers,
-            'cookies' => $cookies,
+        // The routed path is below the base, like the routes the plugin connects.
+        foreach (['/oauth/token', '/oauth/register', '/oauth/revoke', '/oauth/introspect'] as $path) {
+            $this->assertTrue(OAuthServer::csrfSkip($this->post($path, null, '', '/app')), $path);
+        }
+        $this->assertFalse(OAuthServer::csrfSkip($this->post('/app/oauth/token', null, '', '/app')));
+        $this->assertFalse(OAuthServer::csrfSkip($this->post('/oauth/authorize', null, '', '/app')));
+    }
+
+    /**
+     * @return void
+     */
+    public function testCsrfSkipCoversRequestsWithAValidBearerTokenOfThisServer(): void
+    {
+        $api = $this->oauthTokenFor(1, ['api'], 'http://localhost/api');
+        $mcp = $this->oauthTokenFor(1, ['content:read'], 'http://localhost/mcp');
+
+        $this->assertTrue(OAuthServer::csrfSkip($this->post('/api/posts', $api, '/api/**')));
+        $this->assertTrue(OAuthServer::csrfSkip($this->post('/mcp', $mcp)));
+        $this->assertTrue(OAuthServer::csrfSkip(
+            $this->post('/mcp', null, '', '', ['HTTP_AUTHORIZATION' => 'bearer ' . $mcp . '  ']),
+        ));
+
+        $this->assertFalse(OAuthServer::csrfSkip($this->post('/api/posts', null, '/api/**')));
+        $this->assertFalse(OAuthServer::csrfSkip($this->post('/api/posts', 'other_at_abc123', '/api/**')));
+        $this->assertFalse(OAuthServer::csrfSkip($this->post('/api/posts', 'test_xx_abc123', '/api/**')));
+        $this->assertFalse(OAuthServer::csrfSkip(
+            $this->post('/api/posts', null, '/api/**', '', ['HTTP_AUTHORIZATION' => 'Basic ' . $api]),
+        ));
+        $this->assertFalse(OAuthServer::csrfSkip($this->post('/api/posts', $api . "\nx", '/api/**')));
+        $cookie = Routed::request('/api/posts', '/api/**', [
+            'environment' => ['REQUEST_METHOD' => 'POST'],
+            'cookies' => ['PHPSESSID' => 'abc'],
         ]);
-        $bearer = fn(string $token): array => ['HTTP_AUTHORIZATION' => 'Bearer ' . $token];
-
-        $this->assertTrue(OAuthServer::csrfSkip($post('/api/posts', $bearer('test_at_abc123'))));
-        $this->assertTrue(OAuthServer::csrfSkip($post('/mcp', $bearer('test_pat_abc123'))));
-        $this->assertTrue(OAuthServer::csrfSkip($post('/mcp', ['HTTP_AUTHORIZATION' => 'bearer test_at_abc==  '])));
-
-        $this->assertFalse(OAuthServer::csrfSkip($post('/api/posts')));
-        $this->assertFalse(OAuthServer::csrfSkip($post('/api/posts', $bearer('other_at_abc123'))));
-        $this->assertFalse(OAuthServer::csrfSkip($post('/api/posts', $bearer('test_xx_abc123'))));
-        $this->assertFalse(OAuthServer::csrfSkip($post('/api/posts', ['HTTP_AUTHORIZATION' => 'Basic test_at_abc'])));
-        $this->assertFalse(OAuthServer::csrfSkip($post('/api/posts', $bearer("test_at_abc\nx"))));
-        $this->assertFalse(OAuthServer::csrfSkip($post('/api/posts', [], ['PHPSESSID' => 'abc'])));
+        $this->assertFalse(OAuthServer::csrfSkip($cookie));
+        // A token is for one resource: below the other one's path it is not skipped.
+        $this->assertFalse(OAuthServer::csrfSkip($this->post('/mcp', $api)));
+        $this->assertFalse(OAuthServer::csrfSkip($this->post('/api/posts', $mcp, '/api/**')));
         // Session pages stay checked, whatever the header says.
-        $this->assertFalse(OAuthServer::csrfSkip($post('/oauth/authorize', $bearer('test_at_abc123'))));
-        $this->assertFalse(OAuthServer::csrfSkip($post('/oauth/connections', $bearer('test_at_abc123'))));
+        Configure::write('OAuthServer.tokenPaths', ['/']);
+        $this->assertFalse(OAuthServer::csrfSkip($this->post('/oauth/authorize', $api)));
+        $this->assertFalse(OAuthServer::csrfSkip($this->post('/oauth/connections', $api)));
+    }
+
+    /**
+     * @return void
+     */
+    public function testCsrfSkipNeedsATokenThatValidates(): void
+    {
+        $suffix = str_repeat('x', 43);
+        // The prefix alone is not enough: an access or personal token that is not a live token is checked.
+        foreach (['test_at_' . $suffix, 'test_pat_' . $suffix, 'test_at_abc123'] as $garbage) {
+            $this->assertFalse(OAuthServer::csrfSkip($this->post('/api/posts', $garbage, '/api/**')), $garbage);
+        }
+        // A refresh token is never a bearer token.
+        $this->assertFalse(OAuthServer::csrfSkip($this->post('/api/posts', 'test_rt_' . $suffix, '/api/**')));
+
+        $token = $this->oauthTokenFor(1, ['api'], 'http://localhost/api');
+        $this->assertTrue(OAuthServer::csrfSkip($this->post('/api/posts', $token, '/api/**')));
+        $this->assertNull(
+            $this->fetchTable('CakeDC/OAuthServer.OauthTokens')->find()->firstOrFail()->get('last_used_at'),
+            'The skip only looks at the token; the authenticator records the use.',
+        );
+
+        OAuthServer::server()->tokenRevoker()->revokeAllForSubject('1');
+        $this->assertFalse(OAuthServer::csrfSkip($this->post('/api/posts', $token, '/api/**')));
+    }
+
+    /**
+     * @return void
+     */
+    public function testCsrfSkipNeedsTheMatchedRouteBelowThePaths(): void
+    {
+        $mcp = $this->oauthTokenFor(1, ['content:read'], 'http://localhost/mcp');
+
+        $this->assertTrue(OAuthServer::csrfSkip($this->post('/mcp/tools/call', $mcp, '/mcp/**')));
+        // The reviewer's probe: /mcp/account/delete matched by /{tenant}/account/delete.
+        $this->assertFalse(OAuthServer::csrfSkip($this->post('/mcp/account/delete', $mcp, '/{tenant}/account/delete')));
+        $this->assertFalse(OAuthServer::csrfSkip($this->post('/mcp', $mcp, '/{slug}')));
+        $this->assertFalse(OAuthServer::csrfSkip($this->post('/mcp/x/y', $mcp, '/{controller}/{action}/*')));
+        // CSRF middleware placed before routing: no route yet, no skip for a bearer token.
+        $this->assertFalse(OAuthServer::csrfSkip($this->post('/mcp', $mcp, null)));
+
+        Configure::write('OAuthServer.tokenPaths', ['/']);
+        $this->assertTrue(OAuthServer::csrfSkip($this->post('/mcp/account/delete', $mcp, '/{tenant}/account/delete')));
+        $this->assertFalse(OAuthServer::csrfSkip($this->post('/mcp', $mcp, null)));
     }
 
     /**
@@ -131,23 +232,24 @@ class OAuthServerTest extends TestCase
      */
     public function testCsrfSkipForABearerTokenAppliesOnlyBelowTheResourcePaths(): void
     {
-        $post = fn(string $path, string $base = ''): ServerRequest => (new ServerRequest([
-            'url' => $path,
-            'environment' => ['REQUEST_METHOD' => 'POST', 'HTTP_AUTHORIZATION' => 'Bearer test_at_abc123'],
-        ]))->withAttribute('base', $base);
+        $api = $this->oauthTokenFor(1, ['api'], 'http://localhost/api');
+        $mcp = $this->oauthTokenFor(1, ['content:read'], 'http://localhost/mcp');
 
-        // The declared resources are /mcp and /api.
-        foreach (['/api', '/api/x', '/api/x/', '/%61pi/x', '/mcp', '/mcp/tools/call'] as $path) {
-            $this->assertTrue(OAuthServer::csrfSkip($post($path)), $path);
+        // The declared resources are /mcp and /api; the router would pick their catch-all routes.
+        foreach (['/api', '/api/x', '/api/x/', '/%61pi/x'] as $path) {
+            $this->assertTrue(OAuthServer::csrfSkip($this->post($path, $api, '/api/**')), $path);
+        }
+        foreach (['/mcp', '/mcp/tools/call'] as $path) {
+            $this->assertTrue(OAuthServer::csrfSkip($this->post($path, $mcp, '/mcp/**')), $path);
         }
         foreach (
             ['/account/delete', '/api//x', '/api%2Fx', '/api%2fx/y', '/apix', '/apix/me', '/', '/login', '/API/me', '/api/../account/delete',
             '/api/%2e%2e/account/delete', '/mcpx'] as $path
         ) {
-            $this->assertFalse(OAuthServer::csrfSkip($post($path)), $path);
+            $this->assertFalse(OAuthServer::csrfSkip($this->post($path, $api, '/api/**')), $path);
         }
         // The base directory is part of the path the resource lives at.
-        $this->assertFalse(OAuthServer::csrfSkip($post('/api/me', '/sub')));
+        $this->assertFalse(OAuthServer::csrfSkip($this->post('/api/me', $api, '', '/sub')));
     }
 
     /**
@@ -155,10 +257,7 @@ class OAuthServerTest extends TestCase
      */
     public function testCsrfNeverSkipsTheSessionPagesWhateverThePathLooksLike(): void
     {
-        $post = fn(string $path): ServerRequest => new ServerRequest([
-            'url' => $path,
-            'environment' => ['REQUEST_METHOD' => 'POST', 'HTTP_AUTHORIZATION' => 'Bearer test_at_abc123'],
-        ]);
+        $token = $this->oauthTokenFor(1, ['api'], 'http://localhost/api');
         Configure::write('OAuthServer.tokenPaths', ['/']);
 
         foreach (
@@ -166,13 +265,15 @@ class OAuthServerTest extends TestCase
             '/OAuth/Authorize', '/oauth/connections', '/oauth/connections/', '/oauth/./authorize',
             '/oauth/x/../authorize'] as $path
         ) {
-            $this->assertFalse(OAuthServer::csrfSkip($post($path)), $path);
+            $this->assertFalse(OAuthServer::csrfSkip($this->post($path, $token, '/**')), $path);
         }
+        // Control: the same token on another route is skipped.
+        $this->assertTrue(OAuthServer::csrfSkip($this->post('/oauth/other', $token, '/**')));
         // The token endpoint is skipped with the same normalisation.
-        $this->assertTrue(OAuthServer::csrfSkip($post('/oauth/token/')));
+        $this->assertTrue(OAuthServer::csrfSkip($this->post('/oauth/token/')));
         // An encoded slash or an empty segment is not the token endpoint: no skip.
-        $this->assertFalse(OAuthServer::csrfSkip($post('/oauth//token')));
-        $this->assertFalse(OAuthServer::csrfSkip($post('/oauth%2Ftoken')));
+        $this->assertFalse(OAuthServer::csrfSkip($this->post('/oauth//token', $token, '/**')));
+        $this->assertFalse(OAuthServer::csrfSkip($this->post('/oauth%2Ftoken', $token, '/**')));
     }
 
     /**
@@ -180,19 +281,17 @@ class OAuthServerTest extends TestCase
      */
     public function testCsrfSkipUsesTokenPathsWhenConfiguredAndAnExplicitArgumentOverRules(): void
     {
-        $post = fn(string $path): ServerRequest => new ServerRequest([
-            'url' => $path,
-            'environment' => ['REQUEST_METHOD' => 'POST', 'HTTP_AUTHORIZATION' => 'Bearer test_at_abc123'],
-        ]);
+        $token = $this->oauthTokenFor(1, ['api'], 'http://localhost/api');
 
         Configure::write('OAuthServer.tokenPaths', ['/rest']);
-        $this->assertTrue(OAuthServer::csrfSkip($post('/rest/x')));
-        $this->assertFalse(OAuthServer::csrfSkip($post('/api/x')));
-        $this->assertTrue(OAuthServer::csrfSkip($post('/api/x'), ['/api']));
-        $this->assertFalse(OAuthServer::csrfSkip($post('/rest/x'), ['/api']));
+        $this->assertTrue(OAuthServer::csrfSkip($this->post('/rest/x', $token)));
+        $this->assertFalse(OAuthServer::csrfSkip($this->post('/api/x', $token)));
+        $this->assertTrue(OAuthServer::csrfSkip($this->post('/api/x', $token), ['/api']));
+        $this->assertFalse(OAuthServer::csrfSkip($this->post('/rest/x', $token), ['/api']));
+        $this->assertFalse(OAuthServer::csrfSkip($this->post('/api/x', $token, '/{v}/x'), ['/api']));
 
         Configure::write('OAuthServer.tokenPaths', ['/']);
-        $this->assertTrue(OAuthServer::csrfSkip($post('/anything/at/all')));
+        $this->assertTrue(OAuthServer::csrfSkip($this->post('/anything/at/all', $token)));
     }
 
     /**
@@ -205,14 +304,35 @@ class OAuthServerTest extends TestCase
             'scopes' => ['all' => 'Everything'],
         ]]);
         OAuthServer::reset();
-        $request = new ServerRequest([
-            'url' => '/account/delete',
-            'environment' => ['REQUEST_METHOD' => 'POST', 'HTTP_AUTHORIZATION' => 'Bearer test_at_abc123'],
-        ]);
+        $request = $this->post('/account/delete', $this->oauthTokenFor(1, ['all'], 'http://localhost'));
 
         $this->assertFalse(OAuthServer::csrfSkip($request));
         Configure::write('OAuthServer.tokenPaths', ['/']);
         $this->assertTrue(OAuthServer::csrfSkip($request));
+    }
+
+    /**
+     * @return void
+     */
+    public function testCsrfSkipNeverThrowsAndSkipsNothingWhenTheServerCannotBeBuilt(): void
+    {
+        $token = $this->oauthTokenFor(1, ['api'], 'http://localhost/api');
+        $salt = Security::getSalt();
+        Security::setSalt('short');
+        OAuthServer::reset();
+        try {
+            // The derived secret is refused, so the server cannot be built to validate the token.
+            $this->assertFalse(OAuthServer::csrfSkip($this->post('/api/posts', $token, '/api/**')));
+        } finally {
+            Security::setSalt($salt);
+            OAuthServer::reset();
+        }
+
+        // A configuration that cannot be read at all.
+        Configure::write('OAuthServer.routePrefix', 'no slash');
+        Configure::write('OAuthServer.tokenPaths', 'not a list');
+        $this->assertFalse(OAuthServer::csrfSkip($this->post('/oauth/token')));
+        $this->assertFalse(OAuthServer::csrfSkip($this->post('/api/posts', $token, '/api/**')));
     }
 
     /**

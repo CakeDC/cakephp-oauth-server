@@ -174,6 +174,41 @@ class UsersIntegrationTest extends TestCase
         $this->assertSame([], $this->_requestSession->read() ?? []);
     }
 
+    public function testAValidTokenAcceptedOnEveryRouteIsStillNoLoginOnTheSessionPages(): void
+    {
+        // The token authenticator covers every route, so the token validates on the consent and connections
+        // pages: only the pages themselves stand between it and a browser login.
+        $authenticator = Configure::read('Auth.Authenticators.OAuthServerToken');
+        Configure::write('Auth.Authenticators.OAuthServerToken.paths', ['/']);
+        Configure::write('OAuthServer.tokenPaths', ['/']);
+        OAuthServer::reset();
+        try {
+            $user = $this->createUser();
+            $token = $this->oauthTokenFor($user, [], 'http://localhost/api');
+            $client = OAuthServer::server()->clientRegistrar()
+                ->create('Claude', ['https://app.example.com/cb'], false)['client'];
+
+            $this->withOAuthToken($token);
+            $this->get($this->prefix . '/authorize?' . $this->authorizeQuery($client->clientId));
+            $this->assertRedirectContains('/login?redirect=');
+            $this->assertResponseNotContains('Signed in as');
+
+            $this->withOAuthToken($token);
+            $this->get($this->prefix . '/connections');
+            $this->assertRedirectContains('/login?redirect=');
+            $this->assertNull($this->_requestSession->read('Auth'));
+
+            // With the person's own session as well: the token is what authenticated, so still no login.
+            $this->session(['Auth' => $user]);
+            $this->withOAuthToken($token);
+            $this->get($this->prefix . '/authorize?' . $this->authorizeQuery($client->clientId));
+            $this->assertRedirectContains('/login?redirect=');
+            $this->assertResponseNotContains('Signed in as');
+        } finally {
+            Configure::write('Auth.Authenticators.OAuthServerToken', $authenticator);
+        }
+    }
+
     public function testABearerRequestNeverCreatesASession(): void
     {
         $user = $this->createUser();

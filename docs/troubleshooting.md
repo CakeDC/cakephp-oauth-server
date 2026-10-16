@@ -18,6 +18,18 @@ $csrf->skipCheckCallback(fn (ServerRequestInterface $request): bool => OAuthServ
 skipCheckCallback`. If you changed `routePrefix`, `csrfSkip()` follows it. See
 [installation](installation.md#csrf).
 
+## 403 on a bearer POST to your API or MCP endpoint
+
+The CSRF check refused a request that carries one of this server's tokens. `csrfSkip()` skips it only when
+all of this holds ([installation](installation.md#csrf)):
+
+- the token validates for one of your resources: an expired, revoked or made up token gets 403 here, before
+  the authenticator could answer 401;
+- the request is on the routes of that resource: the request path and the static part of the matched
+  route's template are below the resource's path (or `OAuthServer.tokenPaths`). A route that starts with a
+  placeholder (`/{lang}/api/...`) is not; give it a static prefix (`/api/{lang}/...`);
+- `CsrfProtectionMiddleware` comes after `RoutingMiddleware`.
+
 ## 403 when pressing Allow or Revoke
 
 A form on the consent or connections page was posted without a CSRF token. This happens with a template
@@ -58,10 +70,18 @@ breaks every request, including the login page. Run `bin/cake oauth check` and f
 
 ## 401 "The access token is not valid at this address"
 
-A valid token was sent to a route outside its resource's path. A token works only below the path of its
-resource (`/api` for `https://example.com/api`, or the authenticator's `paths`); anywhere else the request is
-refused. Call the resource at its own URL, or set `paths` (and `OAuthServer.tokenPaths`) if your routes live
-elsewhere ([protecting-apis](protecting-apis.md#where-a-token-works)).
+A valid token was sent to a route outside its resource's path. A token works only on the routes of its
+resource: the request path and the static part of the template of the route that matched it must both be
+below the path of the resource (`/api` for `https://example.com/api`, or the authenticator's `paths`);
+anywhere else the request is refused. Check that:
+
+- you call the resource at its own URL;
+- the route has a static prefix within the paths: a route `/{lang}/orders` is not below `/api`, even when it
+  matches the URL `/api/orders`, while `/api/{lang}/orders` is;
+- `AuthenticationMiddleware` comes after `RoutingMiddleware` (before routing every token is refused).
+
+Set `paths` (and `OAuthServer.tokenPaths`) if your routes live elsewhere
+([protecting-apis](protecting-apis.md#where-a-token-works)).
 
 ## "The `Token` alias has already been loaded"
 

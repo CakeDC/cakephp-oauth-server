@@ -5,10 +5,18 @@
 First release. An OAuth 2.1 authorization server for CakePHP 5 on top of cakedc/oauth-server.
 
 - `OAuthServer::csrfSkip()` skips CSRF for the client endpoints and for requests with a bearer token of this
-  server below the path of a resource (`OAuthServer.tokenPaths` or the `$paths` argument override it).
+  server that validates (the core's validator, without recording a use) on the routes of its resource
+  (`OAuthServer.tokenPaths` or the `$paths` argument override the paths). A made up, expired or revoked token
+  with the right prefix gets the normal CSRF check, a bearer request that was not routed yet is never skipped,
+  and `csrfSkip()` never throws: it skips nothing when the configuration cannot be read or the server cannot be
+  built.
 - The Token authenticator has a `paths` option (default: the path of its resource) and refuses, with 401, a
-  request that carries this server's token anywhere else, so a token for one resource cannot act as the
-  person on the rest of the application.
+  request that carries this server's token anywhere else. Both the request path and the static part of the
+  template of the route that matched it must be within `paths`, so a route that starts with a placeholder
+  (`/{tenant}/account/delete`) never receives the token through a URL that looks like the resource's
+  (`/mcp/account/delete`), and a request that was not routed yet is refused. Routes of a resource need a
+  static prefix within its paths.
+- Subdirectory installs: the login redirect of the connections page carries the base path once.
 - People tables keyed by a column other than `id` work: the identity reports the key as its identifier.
 - An invalid `OAuthServer.users` setting no longer breaks `bin/cake` with cakedc/users; `oauth check` reports it.
 - `oauth check` also warns about a missing CSRF middleware and a Session authenticator before the Token one,
