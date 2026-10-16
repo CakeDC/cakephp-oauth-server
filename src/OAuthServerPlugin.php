@@ -88,11 +88,29 @@ class OAuthServerPlugin extends BasePlugin
     public function routes(RouteBuilder $routes): void
     {
         $config = PluginConfig::fromConfigure();
-        $defaults = ['plugin' => 'CakeDC/OAuthServer', 'controller' => 'OAuth'];
-        $routes->connect($config->metadataPath(), $defaults + ['action' => 'metadata']);
-        foreach (['authorize', 'token', 'register', 'revoke', 'introspect', 'connections'] as $action) {
-            $routes->connect($config->routePrefix() . '/' . $action, $defaults + ['action' => $action]);
+        if ($this->isCli()) {
+            // Never break `bin/cake`: `oauth check` reports the invalid setting.
+            $routing = $config->lenientRouting();
+        } else {
+            $routing = $config->routing();
         }
+        $defaults = ['plugin' => 'CakeDC/OAuthServer', 'controller' => 'OAuth'];
+        if ($routing['metadata'] !== null) {
+            $routes->connect($routing['metadata'], $defaults + ['action' => 'metadata']);
+        }
+        foreach (['authorize', 'token', 'register', 'revoke', 'introspect', 'connections'] as $action) {
+            $routes->connect($routing['prefix'] . '/' . $action, $defaults + ['action' => $action]);
+        }
+    }
+
+    /**
+     * Whether this runs on the command line. A seam for tests.
+     *
+     * @return bool
+     */
+    protected function isCli(): bool
+    {
+        return PHP_SAPI === 'cli';
     }
 
     /**

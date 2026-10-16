@@ -180,7 +180,7 @@ class OAuthCheckCommand extends Command
      */
     private function issuer(PluginConfig $config): array
     {
-        $issuer = $config->serverConfig()->issuer;
+        $issuer = $config->issuer();
         $warnings = [];
         if (!str_starts_with($issuer, 'https://')) {
             $warnings[] = 'uses plain http; only acceptable for local development';

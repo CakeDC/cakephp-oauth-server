@@ -520,9 +520,36 @@ class OAuthControllerTest extends TestCase
         );
     }
 
+    private function pluginRunningOn(bool $cli): OAuthServerPlugin
+    {
+        return new class ($cli) extends OAuthServerPlugin {
+            public function __construct(private readonly bool $cli)
+            {
+                parent::__construct();
+            }
+
+            protected function isCli(): bool
+            {
+                return $this->cli;
+            }
+        };
+    }
+
+    public function testAnInvalidIssuerDoesNotBreakTheCommandLine(): void
+    {
+        Configure::write('App.fullBaseUrl', false);
+        $collection = new RouteCollection();
+
+        $this->pluginRunningOn(true)->routes(new RouteBuilder($collection, '/'));
+
+        $paths = array_map(fn($route) => $route->template, $collection->routes());
+        $this->assertContains('/oauth/token', $paths);
+        $this->assertNotContains('/.well-known/oauth-authorization-server', $paths);
+    }
+
     public function testAnInvalidIssuerFailsAtBootNamingTheSetting(): void
     {
-        $plugin = new OAuthServerPlugin();
+        $plugin = $this->pluginRunningOn(false);
         Configure::write('App.fullBaseUrl', 'http://shop.example.com');
         try {
             $plugin->routes(new RouteBuilder(new RouteCollection(), '/'));

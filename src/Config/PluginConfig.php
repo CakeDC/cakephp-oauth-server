@@ -63,16 +63,27 @@ final class PluginConfig
      */
     public function serverConfig(): ServerConfig
     {
-        if ($this->serverConfig !== null) {
-            return $this->serverConfig;
-        }
+        return $this->serverConfig ??= $this->buildServerConfig(null);
+    }
+
+    /**
+     * The core settings, with $secret or the configured or derived one.
+     *
+     * @param string|null $secret A fixed secret, or null for the configured one.
+     * @return \CakeDC\OAuth\Server\Config\ServerConfig
+     * @throws \InvalidArgumentException
+     */
+    private function buildServerConfig(?string $secret): ServerConfig
+    {
         $core = array_diff_key($this->settings, self::PLUGIN_SECTIONS);
         $configured = isset($core['issuer']);
         $core['issuer'] = $this->checkedIssuer(
             $configured ? $core['issuer'] : Configure::read('App.fullBaseUrl'),
             $configured,
         );
-        if (!isset($core['secret'])) {
+        if ($secret !== null) {
+            $core['secret'] = $secret;
+        } elseif (!isset($core['secret'])) {
             $core['secret'] = self::derivedSecret();
         }
         if (isset($core['rateLimit']) && is_array($core['rateLimit'])) {
@@ -80,7 +91,53 @@ final class PluginConfig
         }
         $core['connections'] = (bool)($this->section('connections')['enabled'] ?? true);
 
-        return $this->serverConfig = ServerConfig::fromArray($core);
+        return ServerConfig::fromArray($core);
+    }
+
+    /**
+     * The route prefix and the metadata path, validated by the core without touching the secret.
+     *
+     * Routing must not depend on the secret, so a missing or weak `Security.salt` cannot break boot.
+     * The core only exposes the paths on a ServerConfig, so one is built with a fixed placeholder secret
+     * that is used for path computation alone and never reaches a token or a signature.
+     *
+     * @return array{prefix: string, metadata: string}
+     * @throws \InvalidArgumentException For an invalid issuer, route prefix or resource setting.
+     */
+    public function routing(): array
+    {
+        $server = $this->buildServerConfig(str_repeat('x', 32));
+
+        return ['prefix' => $server->routePrefix, 'metadata' => $server->metadataPath()];
+    }
+
+    /**
+     * The canonical issuer, validated without touching the secret.
+     *
+     * @return string
+     * @throws \InvalidArgumentException
+     */
+    public function issuer(): string
+    {
+        return $this->buildServerConfig(str_repeat('x', 32))->issuer;
+    }
+
+    /**
+     * Like routing(), but never throws: an invalid setting leaves the metadata path null and falls back to
+     * the configured prefix, or `/oauth` when that is invalid too. For the CLI, where `oauth check` reports.
+     *
+     * @return array{prefix: string, metadata: string|null}
+     */
+    public function lenientRouting(): array
+    {
+        try {
+            return $this->routing();
+        } catch (InvalidArgumentException) {
+            $prefix = $this->settings['routePrefix'] ?? '/oauth';
+            $valid = is_string($prefix) && preg_match('#^(/[A-Za-z0-9._~-]+)+\z#', $prefix) === 1;
+
+            return ['prefix' => $valid ? $prefix : '/oauth', 'metadata' => null];
+        }
     }
 
     /**
@@ -261,7 +318,7 @@ final class PluginConfig
      */
     public function routePrefix(): string
     {
-        return $this->serverConfig()->routePrefix;
+        return $this->routing()['prefix'];
     }
 
     /**
@@ -272,7 +329,7 @@ final class PluginConfig
      */
     public function metadataPath(): string
     {
-        return $this->serverConfig()->metadataPath();
+        return $this->routing()['metadata'];
     }
 
     /**

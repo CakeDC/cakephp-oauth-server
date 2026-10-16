@@ -3,7 +3,6 @@ declare(strict_types=1);
 
 namespace CakeDC\OAuthServer\Test\TestCase\Command;
 
-use Cake\Command\Command;
 use Cake\Console\ConsoleIo;
 use Cake\Console\TestSuite\ConsoleIntegrationTestTrait;
 use Cake\Console\TestSuite\StubConsoleOutput;
@@ -181,19 +180,29 @@ class CommandsTest extends TestCase
     {
         $salt = Security::getSalt();
         Security::setSalt('short');
-        $out = new StubConsoleOutput();
         try {
-            // Run the command directly: the application's routes refuse a weak secret at boot.
-            $code = (new OAuthCheckCommand())->run([], new ConsoleIo($out, new StubConsoleOutput()));
+            $this->exec('oauth check');
         } finally {
             Security::setSalt($salt);
         }
 
-        $text = implode("\n", $out->messages());
-        $this->assertSame(Command::CODE_ERROR, $code);
-        $this->assertStringContainsString('[FAIL] Secret', $text);
-        $this->assertStringContainsString('[FAIL] Configuration', $text);
-        $this->assertStringContainsString('[PASS] Tables', $text);
+        $this->assertExitError();
+        $this->assertOutputContains('[FAIL] Secret');
+        $this->assertOutputContains('[FAIL] Configuration');
+        $this->assertOutputContains('[PASS] Tables');
+        $this->assertOutputContains('[WARN] Issuer');
+    }
+
+    public function testCheckReportsAMissingBaseUrlWithoutCrashing(): void
+    {
+        Configure::write('App.fullBaseUrl', false);
+
+        $this->exec('oauth check');
+
+        $this->assertExitError();
+        $this->assertOutputContains('[FAIL] Issuer');
+        $this->assertOutputContains('App.fullBaseUrl');
+        $this->assertOutputContains('[PASS] Tables');
     }
 
     public function testCheckAcceptsAConfiguredSecret(): void
