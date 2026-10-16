@@ -13,12 +13,15 @@ class RequestPathsTest extends TestCase
     {
         $this->assertSame('/', RequestPaths::normalize(''));
         $this->assertSame('/', RequestPaths::normalize('/'));
-        $this->assertSame('/', RequestPaths::normalize('///'));
         $this->assertSame('/api', RequestPaths::normalize('/api/'));
-        $this->assertSame('/api/x', RequestPaths::normalize('//api///x//'));
         $this->assertSame('/api/x', RequestPaths::normalize('api/x'));
         $this->assertSame('/api/x', RequestPaths::normalize('/%61pi/x'));
-        $this->assertSame('/api/x', RequestPaths::normalize('/api%2Fx'));
+        $this->assertSame('/api%2Fx', RequestPaths::normalize('/api%252Fx'));
+        $this->assertSame('/a b', RequestPaths::normalize('/a%20b'));
+        // Fail closed where the router and a string comparison could disagree.
+        foreach (['///', '//api/x', '/api//x', '/api/x//', '/api%2Fx', '/api%2fx/y', '/oauth%2Ftoken', '/%2F'] as $path) {
+            $this->assertNull(RequestPaths::normalize($path), $path);
+        }
         $this->assertNull(RequestPaths::normalize('/api/../x'));
         $this->assertNull(RequestPaths::normalize('/api/./x'));
         $this->assertNull(RequestPaths::normalize('/api/%2e%2e/x'));
@@ -49,7 +52,7 @@ class RequestPathsTest extends TestCase
 
     public function testFullPathAddsTheBase(): void
     {
-        $request = new ServerRequest(['url' => '/api//me/']);
+        $request = new ServerRequest(['url' => '/api/me/']);
 
         $this->assertSame('/api/me', RequestPaths::fullPath($request));
         $this->assertSame('/sub/api/me', RequestPaths::fullPath($request->withAttribute('base', '/sub')));

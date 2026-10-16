@@ -137,11 +137,11 @@ class OAuthServerTest extends TestCase
         ]))->withAttribute('base', $base);
 
         // The declared resources are /mcp and /api.
-        foreach (['/api', '/api/x', '/api/x/', '//api//x', '/%61pi/x', '/mcp', '/mcp/tools/call'] as $path) {
+        foreach (['/api', '/api/x', '/api/x/', '/%61pi/x', '/mcp', '/mcp/tools/call'] as $path) {
             $this->assertTrue(OAuthServer::csrfSkip($post($path)), $path);
         }
         foreach (
-            ['/account/delete', '/apix', '/apix/me', '/', '/login', '/API/me', '/api/../account/delete',
+            ['/account/delete', '/api//x', '/api%2Fx', '/api%2fx/y', '/apix', '/apix/me', '/', '/login', '/API/me', '/api/../account/delete',
             '/api/%2e%2e/account/delete', '/mcpx'] as $path
         ) {
             $this->assertFalse(OAuthServer::csrfSkip($post($path)), $path);
@@ -162,7 +162,7 @@ class OAuthServerTest extends TestCase
         Configure::write('OAuthServer.tokenPaths', ['/']);
 
         foreach (
-            ['/oauth/authorize', '/oauth/authorize/', '/oauth/%61uthorize', '/oauth//authorize',
+            ['/oauth/authorize', '/oauth/authorize/', '/oauth/%61uthorize', '/oauth//authorize', '/oauth%2Fauthorize',
             '/OAuth/Authorize', '/oauth/connections', '/oauth/connections/', '/oauth/./authorize',
             '/oauth/x/../authorize'] as $path
         ) {
@@ -170,7 +170,9 @@ class OAuthServerTest extends TestCase
         }
         // The token endpoint is skipped with the same normalisation.
         $this->assertTrue(OAuthServer::csrfSkip($post('/oauth/token/')));
-        $this->assertTrue(OAuthServer::csrfSkip($post('/oauth//token')));
+        // An encoded slash or an empty segment is not the token endpoint: no skip.
+        $this->assertFalse(OAuthServer::csrfSkip($post('/oauth//token')));
+        $this->assertFalse(OAuthServer::csrfSkip($post('/oauth%2Ftoken')));
     }
 
     /**

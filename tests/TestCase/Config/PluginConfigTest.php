@@ -336,7 +336,7 @@ class PluginConfigTest extends TestCase
         $this->assertSame(['/mcp', '/api/v1'], $config->bearerPaths());
 
         $config = new PluginConfig(['issuer' => 'https://example.com', 'resources' => $resources,
-            'tokenPaths' => ['/rest/', '//a']]);
+            'tokenPaths' => ['/rest/', '/a']]);
         $this->assertSame(['/rest', '/a'], $config->tokenPaths());
         $this->assertSame(['/rest', '/a'], $config->bearerPaths());
         $this->assertSame(['/rest', '/a'], $config->usersPaths());

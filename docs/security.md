@@ -7,9 +7,9 @@ and never relaxes what it enforces. This page lists what the plugin adds and wha
 
 ## What the plugin adds
 
-- **Cake's CSRF stays on the consent and connections forms.** Only the token, register, revoke and
-  introspect endpoints are skipped, by `OAuthServer::csrfSkip()`, because OAuth clients cannot send a
-  token. The forms are built with `FormHelper`; a template override must do the same
+- **Cake's CSRF stays on the consent and connections forms.** By `OAuthServer::csrfSkip()` only the token,
+  register, revoke and introspect endpoints, and bearer requests below a resource's path (see the next
+  point), are skipped, because those clients cannot send a token. The forms are built with `FormHelper`; a template override must do the same
   ([pages](pages.md#forms-and-csrf)). The core also signs the forms with `OAuthServer.secret`.
 - **A token works only below its resource's path.** The Token authenticator authenticates a token only
   under the path of the resource it was issued for (`/api` for `https://example.com/api`, or its `paths`

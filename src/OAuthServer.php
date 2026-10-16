@@ -65,8 +65,8 @@ final class OAuthServer
      * attach a valid token. But a token is only honoured below its resource's path (see TokenAuthenticator), so
      * the skip applies there alone: by default the paths of the declared resources, or `OAuthServer.tokenPaths`,
      * or $paths. The consent and connections pages are session pages and are never skipped, with or without a
-     * bearer token; paths are compared after the normalisation the router applies, and a path with `.` or `..`
-     * segments is never skipped. Requests without a bearer token, or with a foreign one, stay checked.
+     * bearer token; paths are compared after the normalisation the router applies, and a path with `%2F`, an
+     * empty segment or `.` / `..` segments is never skipped. Requests without a bearer token, or with a foreign one, stay checked.
      *
      * @param \Psr\Http\Message\ServerRequestInterface $request The request.
      * @param list<string>|null $paths Path prefixes where a bearer token is accepted, when the application's

@@ -98,8 +98,10 @@ boundaries: `/api` and `/api/x`, not `/apix`), or the list in `OAuthServer.token
 ([configuration](configuration.md#tokenpaths)) when you set it, or the `$paths` argument of
 `csrfSkip($request, $paths)`. A resource at the host root (`https://example.com`) adds no path by
 itself: covering every route takes an explicit `'tokenPaths' => ['/']`. Paths are compared after the
-normalisation the router applies (URL-decoded, duplicate and trailing slashes ignored, base directory
-included); a path with `.` or `..` segments is never skipped.
+normalisation the router applies (each segment URL-decoded on its own, a trailing slash ignored, base
+directory included). A path the router and a string comparison could read differently fails closed: one with
+an encoded slash (`%2F`), an empty segment (`//`) or `.` / `..` segments is never skipped, and a token
+presented there is refused.
 
 Everything else stays CSRF checked: session routes, requests with no bearer or a foreign one, and the
 consent and connections pages (`<prefix>/authorize` and `<prefix>/connections` are never skipped, even with

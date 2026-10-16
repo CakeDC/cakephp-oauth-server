@@ -14,23 +14,35 @@ use Psr\Http\Message\ServerRequestInterface;
 final class RequestPaths
 {
     /**
-     * A path as the router sees it: URL-decoded, duplicate slashes collapsed, no trailing slash (the root is
-     * `/`). Null when the path has `.` or `..` segments, which nothing here may reason about.
+     * A path as the router sees it: each segment URL-decoded on its own, no trailing slash (the root is `/`).
+     *
+     * It fails closed, returning null (no match, never skip anything) where the router and a plain string
+     * comparison could disagree: an encoded slash (`%2F` in any case; the router keeps it inside one segment),
+     * an empty interior segment (`//`, the router does not collapse it) and `.` or `..` segments.
      *
      * @param string $path The path, without a query string.
      * @return string|null
      */
     public static function normalize(string $path): ?string
     {
-        $decoded = urldecode($path);
-        $collapsed = (string)preg_replace('#/{2,}#', '/', '/' . $decoded);
-        $segments = explode('/', $collapsed);
-        if (in_array('.', $segments, true) || in_array('..', $segments, true)) {
+        if (preg_match('/%2f/i', $path) === 1) {
             return null;
         }
-        $trimmed = rtrim($collapsed, '/');
+        $segments = explode('/', str_starts_with($path, '/') ? $path : '/' . $path);
+        array_shift($segments);
+        if ($segments !== [] && end($segments) === '') {
+            array_pop($segments);
+        }
+        $decoded = [];
+        foreach ($segments as $segment) {
+            $value = urldecode($segment);
+            if ($value === '' || $value === '.' || $value === '..' || str_contains($value, '/')) {
+                return null;
+            }
+            $decoded[] = $value;
+        }
 
-        return $trimmed === '' ? '/' : $trimmed;
+        return '/' . implode('/', $decoded);
     }
 
     /**

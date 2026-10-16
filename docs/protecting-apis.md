@@ -41,7 +41,7 @@ Options of `CakeDC\OAuthServer\Authenticator\TokenAuthenticator`:
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `resource` | `null` | The resource identifier the token must be issued for. `null` is the server's default resource. It must be declared in `OAuthServer.resources`, or the constructor throws `InvalidArgumentException` |
-| `paths` | the path of the resource identifier | Path prefixes where the authenticator authenticates, for example `['/api']`. Matched on segment boundaries (`/api` covers `/api` and `/api/x`, not `/apix`) against the full request path, base directory included, after the router's normalisation. A resource at the host root (`https://example.com`) needs `paths` set explicitly (`['/']` covers every route), otherwise the constructor throws `InvalidArgumentException` |
+| `paths` | the path of the resource identifier | Path prefixes where the authenticator authenticates, for example `['/api']`. Matched on segment boundaries (`/api` covers `/api` and `/api/x`, not `/apix`) against the full request path, base directory included, after the router's normalisation (a path with `%2F`, `//` or `.` / `..` segments matches nothing). A resource at the host root (`https://example.com`) needs `paths` set explicitly (`['/']` covers every route), otherwise the constructor throws `InvalidArgumentException` |
 | `header` | `Authorization` | The request header that carries the bearer token |
 | `resourceMetadataUrl` | `null` | URL of the protected resource metadata document (RFC 9728) that your endpoint serves. When set, it is added to the 401 challenge as `resource_metadata` |
 | `skipTwoFactorVerify` | `true` | For `cakedc/users`: a token is not asked for a second factor |

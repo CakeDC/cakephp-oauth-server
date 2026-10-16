@@ -76,6 +76,10 @@ class Application extends BaseApplication implements
             $builder->connect('/api/**', ['controller' => 'Pages', 'action' => 'me']);
             $builder->connect('/apix/**', ['controller' => 'Pages', 'action' => 'me']);
             // A session route that changes state.
+            // Routes whose first segment is a free parameter: an encoded slash must not reach them as a path.
+            $builder->connect('/{tenant}/account/delete', ['controller' => 'Pages', 'action' => 'deleteAccount']);
+            $builder->connect('/{slug}', ['controller' => 'Pages', 'action' => 'deleteAccount'])
+                ->setPatterns(['slug' => '[^/]+']);
             $builder->connect('/account/delete', ['controller' => 'Pages', 'action' => 'deleteAccount']);
             $builder->fallbacks();
         });

@@ -103,6 +103,32 @@ class TokenPathsTest extends TestCase
         $this->assertResponseOk();
     }
 
+    public function testAnEncodedSlashCannotSmuggleARouteIntoThePath(): void
+    {
+        foreach (['/api%2Fx/account/delete', '/api%2fx/account/delete'] as $path) {
+            $this->actAsOAuth(1, ['api'], 'http://localhost/api');
+            $this->post($path, ['anything' => 'x']);
+            $this->assertContains($this->_response->getStatusCode(), [401, 403], $path);
+            $this->assertNull(Configure::read('TestApp.accountDeleted'), $path);
+
+            $this->actAsOAuth(1, ['api'], 'http://localhost/api');
+            $this->enableCsrfToken();
+            $this->post($path, ['anything' => 'x']);
+            $this->assertResponseCode(401);
+            $this->assertNull(Configure::read('TestApp.accountDeleted'), $path);
+            $this->_request = [];
+        }
+    }
+
+    public function testAnEncodedEndpointPathIsStillCsrfChecked(): void
+    {
+        foreach (['/oauth%2Ftoken', '/oauth%2Frevoke'] as $path) {
+            $this->session(['Auth' => ['id' => 1]]);
+            $this->post($path, ['x' => '1']);
+            $this->assertResponseCode(403, $path);
+        }
+    }
+
     public function testASiblingPathWithTheSamePrefixIsOutside(): void
     {
         $this->actAsOAuth(1, ['api'], 'http://localhost/api');
@@ -138,7 +164,7 @@ class TokenPathsTest extends TestCase
     {
         $authenticator = new TokenAuthenticator(new IdentifierCollection(), [
             'resource' => 'http://localhost/api',
-            'paths' => ['/account', '/api//v2/'],
+            'paths' => ['/account', '/api/v2/'],
         ]);
         $token = $this->oauthTokenFor(1, ['api'], 'http://localhost/api');
         $at = fn(string $url): bool => $authenticator->authenticate(
