@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace CakeDC\OAuthServer\Test\TestCase\Identity;
 
+use Authentication\AuthenticationService;
 use Authentication\Identity;
 use Authorization\AuthorizationService;
 use Authorization\IdentityDecorator;
@@ -70,5 +71,32 @@ class OAuthIdentityTest extends TestCase
             (new ServerRequest())->withAttribute('identity', new IdentityDecorator(new AuthorizationService(new MapResolver()), new Identity(['id' => 1]))),
         ));
         $this->assertNull(OAuthServer::token(new ServerRequest()));
+    }
+
+    public function testFieldMapsOfTheOwnersIdentityApply(): void
+    {
+        $entity = new Entity(['id' => 1, 'full_name' => 'Ada']);
+        $identity = new OAuthIdentity($this->validated(new Identity($entity, ['fieldMap' => ['name' => 'full_name']])));
+
+        $this->assertSame('Ada', $identity->get('name'));
+        $this->assertSame('Ada', $identity['name']);
+        $this->assertSame('Ada', $identity->name);
+        $this->assertNull($identity->get('missing'));
+    }
+
+    public function testTheTokenIsFoundUnderARenamedIdentityAttribute(): void
+    {
+        $validated = $this->validated(['id' => 1]);
+        $service = new AuthenticationService(['identityAttribute' => 'principal']);
+        $request = (new ServerRequest())
+            ->withAttribute('authentication', $service)
+            ->withAttribute('principal', new OAuthIdentity($validated));
+
+        $this->assertSame($validated, OAuthServer::token($request));
+        $this->assertNull(OAuthServer::token((new ServerRequest())->withAttribute('principal', new OAuthIdentity($validated))));
+        $this->assertSame($validated, OAuthIdentity::fromRequest(
+            (new ServerRequest())->withAttribute('principal', new OAuthIdentity($validated)),
+            'principal',
+        ));
     }
 }

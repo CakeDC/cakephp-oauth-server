@@ -102,7 +102,12 @@ class TokenAuthenticator extends AbstractAuthenticator implements StatelessInter
         $parts[] = 'error_description="' . self::quote($description) . '"';
 
         throw new AuthenticationRequiredException(
-            ['WWW-Authenticate' => 'Bearer ' . implode(', ', $parts)],
+            [
+                'WWW-Authenticate' => 'Bearer ' . implode(', ', $parts),
+                'Content-Type' => 'application/json',
+                'Cache-Control' => 'no-store',
+                'Pragma' => 'no-cache',
+            ],
             (string)json_encode(['error' => 'invalid_token', 'error_description' => $description]),
         );
     }

@@ -12,6 +12,7 @@ use Authorization\AuthorizationServiceInterface;
 use Authorization\AuthorizationServiceProviderInterface;
 use Authorization\Middleware\AuthorizationMiddleware;
 use Authorization\Policy\MapResolver;
+use Cake\Core\Configure;
 use Cake\Error\Middleware\ErrorHandlerMiddleware;
 use Cake\Http\BaseApplication;
 use Cake\Http\Middleware\BodyParserMiddleware;
@@ -54,7 +55,10 @@ class Application extends BaseApplication implements
             ->add(new BodyParserMiddleware())
             ->add($csrf)
             ->add(new AuthenticationMiddleware($this))
-            ->add(new AuthorizationMiddleware($this, ['requireAuthorizationCheck' => true]));
+            ->add(new AuthorizationMiddleware($this, [
+                'requireAuthorizationCheck' => true,
+                'identityAttribute' => Configure::read('TestApp.identityAttribute', 'identity'),
+            ]));
     }
 
     /**
@@ -76,7 +80,9 @@ class Application extends BaseApplication implements
      */
     public function getAuthenticationService(ServerRequestInterface $request): AuthenticationServiceInterface
     {
-        $service = new AuthenticationService();
+        $service = new AuthenticationService([
+            'identityAttribute' => Configure::read('TestApp.identityAttribute', 'identity'),
+        ]);
         $service->loadAuthenticator('Authentication.Session', ['sessionKey' => 'Auth']);
         $service->loadAuthenticator('CakeDC/OAuthServer.Token', ['resource' => 'http://localhost/api']);
 

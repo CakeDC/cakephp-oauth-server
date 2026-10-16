@@ -14,7 +14,6 @@ use CakeDC\OAuth\Server\Owner\ResourceOwner;
 use CakeDC\OAuth\Server\Owner\SubjectType;
 use CakeDC\OAuth\Server\Owner\UserContextInterface;
 use CakeDC\OAuth\Server\Owner\UserProviderInterface;
-use CakeDC\OAuthServer\OAuthServer;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 
@@ -86,14 +85,7 @@ final class SessionUserContext implements UserContextInterface
         }
 
         // A bearer token (also behind cakephp/authorization's IdentityDecorator) is never a person's login.
-        if (OAuthServer::token($request) !== null) {
-            return true;
-        }
-        $identity = $request->getAttribute($service instanceof AuthenticationServiceInterface
-            ? $service->getIdentityAttribute()
-            : $this->identityAttribute);
-
-        return $identity instanceof OAuthIdentity;
+        return OAuthIdentity::fromRequest($request, $this->identityAttribute) !== null;
     }
 
     /**

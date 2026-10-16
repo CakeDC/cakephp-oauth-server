@@ -4,9 +4,13 @@ declare(strict_types=1);
 namespace CakeDC\OAuthServer\Identity;
 
 use ArrayAccess;
+use Authentication\AuthenticationServiceInterface;
 use Authentication\IdentityInterface;
+use Authorization\IdentityDecorator;
 use BadMethodCallException;
 use CakeDC\OAuth\Server\Token\ValidatedToken;
+use Error;
+use Psr\Http\Message\ServerRequestInterface;
 
 /**
  * The identity of a request authenticated with an OAuth token: behaves like the owner's own
@@ -19,6 +23,39 @@ final class OAuthIdentity implements IdentityInterface
      */
     public function __construct(private readonly ValidatedToken $token)
     {
+    }
+
+    /**
+     * The validated token of a request authenticated with a token of this server, also behind
+     * cakephp/authorization's IdentityDecorator; null otherwise.
+     *
+     * The identity attribute is the one the request's authentication service reports, so renaming it
+     * does not hide the token.
+     *
+     * @param \Psr\Http\Message\ServerRequestInterface $request The request.
+     * @param string|null $attribute Attribute to read when the request has no authentication service.
+     * @return \CakeDC\OAuth\Server\Token\ValidatedToken|null
+     */
+    public static function fromRequest(ServerRequestInterface $request, ?string $attribute = null): ?ValidatedToken
+    {
+        $service = $request->getAttribute('authentication');
+        $name = $service instanceof AuthenticationServiceInterface
+            ? $service->getIdentityAttribute()
+            : ($attribute ?? 'identity');
+        $identity = $request->getAttribute($name);
+        if ($identity instanceof self) {
+            return $identity->getOAuthToken();
+        }
+        if (!$identity instanceof IdentityDecorator) {
+            return null;
+        }
+        try {
+            $token = $identity->__call('getOAuthToken', []);
+        } catch (BadMethodCallException | Error) {
+            return null;
+        }
+
+        return $token instanceof ValidatedToken ? $token : null;
     }
 
     /**
@@ -69,13 +106,28 @@ final class OAuthIdentity implements IdentityInterface
     }
 
     /**
+     * A field of the owner's identity, through its field map when it has one.
+     *
+     * @param string $field The field.
+     * @return mixed
+     */
+    public function get(string $field): mixed
+    {
+        $identity = $this->token->owner->identity;
+        if ($identity instanceof IdentityInterface) {
+            return $identity[$field];
+        }
+        $data = $this->getOriginalData();
+
+        return $data[$field] ?? null;
+    }
+
+    /**
      * @inheritDoc
      */
     public function offsetExists(mixed $offset): bool
     {
-        $data = $this->getOriginalData();
-
-        return isset($data[$offset]);
+        return $this->get((string)$offset) !== null;
     }
 
     /**
@@ -83,9 +135,7 @@ final class OAuthIdentity implements IdentityInterface
      */
     public function offsetGet(mixed $offset): mixed
     {
-        $data = $this->getOriginalData();
-
-        return $data[$offset] ?? null;
+        return $this->get((string)$offset);
     }
 
     /**
@@ -109,7 +159,7 @@ final class OAuthIdentity implements IdentityInterface
      */
     public function __get(string $name): mixed
     {
-        return $this->offsetGet($name);
+        return $this->get($name);
     }
 
     /**

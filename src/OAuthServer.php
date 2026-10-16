@@ -3,8 +3,6 @@ declare(strict_types=1);
 
 namespace CakeDC\OAuthServer;
 
-use Authorization\IdentityDecorator;
-use BadMethodCallException;
 use Cake\Http\ResponseFactory;
 use Cake\Http\ServerRequest;
 use Cake\Http\StreamFactory;
@@ -14,7 +12,6 @@ use CakeDC\OAuth\Server\Token\ValidatedToken;
 use CakeDC\OAuthServer\Config\PluginConfig;
 use CakeDC\OAuthServer\Identity\OAuthIdentity;
 use CakeDC\OAuthServer\Server\ServerFactory;
-use Error;
 use Psr\Http\Message\ServerRequestInterface;
 
 /**
@@ -118,19 +115,6 @@ final class OAuthServer
      */
     public static function token(ServerRequestInterface $request): ?ValidatedToken
     {
-        $identity = $request->getAttribute('identity');
-        if ($identity instanceof OAuthIdentity) {
-            return $identity->getOAuthToken();
-        }
-        if (!$identity instanceof IdentityDecorator) {
-            return null;
-        }
-        try {
-            $token = $identity->__call('getOAuthToken', []);
-        } catch (BadMethodCallException | Error) {
-            return null;
-        }
-
-        return $token instanceof ValidatedToken ? $token : null;
+        return OAuthIdentity::fromRequest($request);
     }
 }
