@@ -98,4 +98,24 @@ class CakeLoggerTest extends TestCase
 
         $this->assertNull(Log::getConfig('oauth'));
     }
+
+    public function testPluginLeavesAnExistingOauthEngineAlone(): void
+    {
+        Log::setConfig('oauth', ['className' => ArrayLog::class, 'scopes' => ['other']]);
+
+        (new OAuthServerPlugin())->bootstrap($this->createStub(PluginApplicationInterface::class));
+
+        $this->assertSame(ArrayLog::class, Log::getConfig('oauth')['className']);
+    }
+
+    public function testACatchAllEngineAlreadyReceivesTheScope(): void
+    {
+        Log::setConfig('oauth_test', ['className' => ArrayLog::class, 'scopes' => []]);
+
+        (new OAuthServerPlugin())->bootstrap($this->createStub(PluginApplicationInterface::class));
+        (new CakeLogger())->error('endpoint failed');
+
+        $this->assertNull(Log::getConfig('oauth'));
+        $this->assertStringContainsString('endpoint failed', $this->lines('oauth_test'));
+    }
 }

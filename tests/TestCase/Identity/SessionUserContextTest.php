@@ -22,6 +22,12 @@ class SessionUserContextTest extends TestCase
 {
     protected array $fixtures = ['plugin.CakeDC/OAuthServer.Users'];
 
+    protected function tearDown(): void
+    {
+        Router::reload();
+        parent::tearDown();
+    }
+
     private function context(string|array $loginUrl = '/login'): SessionUserContext
     {
         $provider = new OrmUserProvider((new PluginConfig([]))->userProvider());
