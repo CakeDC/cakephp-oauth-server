@@ -50,7 +50,7 @@ class DocsTest extends TestCase
                     'personalTokens', 'retentionDays', 'refreshReuseGrace', 'personalMax', 'allowPrivateSchemes',
                     'allowedHosts', 'initialAccessToken',
                 ]),
-                ['rateLimit.cimd', 'family_started_at'],
+                ['rateLimit.cimd', 'rateLimit.introspect', 'family_started_at'],
             ),
             'commands.md' => [
                 'oauth client add', 'oauth client list', 'oauth client revoke', 'oauth token revoke',
@@ -64,6 +64,7 @@ class DocsTest extends TestCase
             ],
             'installation.md' => [
                 'OAuthServer::csrfSkip', 'migrations migrate -p CakeDC/OAuthServer', 'CakeDC/OAuthServer.Token',
+                '20261017120000_AddOAuthCodesSubjectIndex.php',
             ],
             'protecting-apis.md' => [
                 'OAuthServer::token', 'OAuthIdentity', 'CakeDC/OAuthServer.Token', 'resourceMetadataUrl',
@@ -76,11 +77,13 @@ class DocsTest extends TestCase
             'users.md' => ['--consents', 'deleteConsentsBySubject', 'revokeAllForSubject', 'OrmUserProvider'],
             'pages.md' => [
                 'templates/plugin/CakeDC/OAuthServer', 'oauth_server.po', 'OAuthServer::pageCsp',
+                'clientLabel()', 'declaredName()', 'QuotedName::html', '$notice', 'approvedBefore',
+                'webHosts()', 'hasNonWebRedirect()',
             ],
             'testing.md' => [
                 'OAuthTestTrait', 'oauthTokenFor', 'withOAuthToken', 'actAsOAuth', 'OAuthServer::reset',
             ],
-            'mcp.md' => ['mcpTokenValidator', 'cakedc/cakephp-mcp'],
+            'mcp.md' => ['mcpTokenValidator', 'cakedc/cakephp-mcp', 'mcp/sdk 0.9'],
             'deployment.md' => [
                 'trustProxy', 'setTrustedProxies', '160.79.104.0/21', 'utf8mb4_bin', 'CHAR(36)',
             ],

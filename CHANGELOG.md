@@ -7,6 +7,52 @@ First release. An OAuth 2.1 authorization server for CakePHP 5 on top of cakedc/
 - Requires CakePHP 5.1.10 or later and `cakephp/authentication` 3.3.6 or later: earlier releases have published
   security advisories (one of them an open redirect through the login's `redirect` parameter, the flow the
   consent page uses), and current Composer refuses to install them.
+- Follows the core's review fixes. `/authorize` never redirects before the person signed in (a visitor gets the
+  login with the same return address on `GET`, the plain error page on `POST`), and sends an error back to the
+  client automatically only when an administrator registered it or the signed-in person approved it before.
+  Otherwise the error page names the destination and offers a plain "Continue to ..." link: `CakeErrorPageRenderer`
+  implements the core's `RedirectNoticeRendererInterface` and `templates/OAuth/error.php` gets `$notice` (a
+  `RedirectNoticeView`, `null` on other error pages). An override of `error.php` that ignores `$notice` shows the
+  plain page and never sends the person to the client.
+- A remembered consent no longer answers for a public client with a loopback or private-scheme redirect URI
+  (Claude Code connecting over loopback among them): the consent page is shown on every connection, with the new
+  line "You approved this application before...". https clients and confidential clients are remembered as before.
+- The consent and connections pages never headline a self-registered client by a name or a host it chose. The
+  consent page uses `ConsentView::clientLabel()` (the host its answer goes to; "An application on this computer"
+  for a private-use scheme) in the title, the heading and the "from" line, and shows `declaredName()` only as
+  "It calls itself ..." with the name inside a `<q>` element. The connections page labels such a client by the
+  hosts of its redirect URIs (`Client::webHosts()`), with "and an application on this computer" when it also has a
+  private-use redirect. New public `CakeDC\OAuthServer\View\QuotedName::html()` prints a client-chosen name that
+  way for template overrides. Overrides that print `client->name` or `clientHost()` in the heading of a
+  dynamically registered client are spoofable: update them ([pages](docs/pages.md#variables)).
+- `registration.allowPrivateSchemes` now defaults to `false` (the core's new default): dynamic registration and
+  metadata documents accept https and loopback http redirect URIs only. Clients added with `oauth client add` may
+  still use private-use schemes. The configuration example no longer enables it.
+- Client names (`oauth client add`, dynamic registration) and personal token names follow the core's name rules:
+  at least one visible character, no control, bidirectional or other invisible characters, lengths counted in
+  characters. `oauth client add` prints the core's message and exits non-zero for such a name.
+- `OrmStorage` implements the core's new `deleteCodesBySubject()` and `deleteCodesByClient()` (one `DELETE` of
+  the unused codes each), so `oauth token revoke --subject` and `--client` and revoking a connection on the
+  connections page also delete the codes not exchanged yet. It refuses a second client with the same `client_id`
+  (insert or update) and passes the core's storage contract on SQLite, MySQL 8.4, MariaDB 11.8 and PostgreSQL 17.
+- `OrmStorage::prune()` claims each unused client with one conditional `UPDATE` inside its transaction (after
+  `SELECT ... FOR UPDATE` on MySQL, MariaDB and PostgreSQL) and deletes it only when the claim succeeds, so a client
+  used or given a token after `oauth prune` selected it is kept with its token. `PruneLockTest` replays the race
+  with two processes when `DB_URL` points at MySQL, MariaDB or PostgreSQL.
+- New migration `20261017120000_AddOAuthCodesSubjectIndex.php`: an index on `oauth_authorization_codes (subject)`,
+  as in the core's schema. Copy it like the first one; `oauth check` warns on the `Tables` line when it is missing.
+- The connections page shows a connection's grant (its newest unrotated refresh token), so a down-scoped refresh
+  no longer makes it show less; a refresh keeps the grant on the new refresh token and narrows only the access
+  token (documented in configuration and users).
+- Rate limiting fails open when the Cake cache behind it fails, logging a warning on the `oauth` scope, and
+  `/introspect` has its own counter, `rateLimit.introspect` (default `[600, 60]`), which the plugin passes through.
+- `#[\SensitiveParameter]` on the plugin's parameters that carry secrets: `PluginConfig` settings (with `secret`
+  and `registration.initialAccessToken`) and secret, and `OAuthTestTrait::withOAuthToken()`.
+- The MCP bridge needs mcp/sdk 0.9 or newer (`mcpTokenValidator()` says so with a `LogicException`).
+- `OrmStorage` no longer uses the core's internal `Support\Time`. The plugin still builds the core's internal
+  `HttpResponder` to read the core's page policy (`OAuthServer::pageCsp()`) and to answer 503; it is internal to
+  the core and used only within CakeDC packages.
+- English and Spanish translations of the new texts.
 - A broken `OAuthServer` configuration never takes the application down, on the web or the command line: the
   application's pages (the login included), `bin/cake` and migrations keep working, the plugin's routes are still
   connected (at the configured prefix and issuer when each is valid on its own) and answer 503 (JSON on the
@@ -119,6 +165,9 @@ Found by the pre-release review and left for 1.0.0, not fixed in this beta:
   scope), where CakePHP builds them lazily; an engine that depends on something configured later fails at boot.
 - A refresh token (`<prefix>_rt_`) presented as a bearer token is passed on silently to the next authenticator
   instead of being refused with 401. It is never accepted and never skips CSRF.
+- From the core: concurrent refreshes with the same refresh token can revoke the whole family (the grace window
+  absorbs a retry after a lost response, not parallel refreshes). Clients must send one refresh at a time per
+  token.
 - Public API to settle before 1.0.0: `OAuthServer::pageCsp()` and `OAuthServer::forRequest()` are public methods
   marked `@internal` on the facade (to move to an internal class); `OAuthController` is declared neither public nor
   internal; the plugin's routes have no names (`_name`) to link to; `OAuthServer.services` (clock, transport,

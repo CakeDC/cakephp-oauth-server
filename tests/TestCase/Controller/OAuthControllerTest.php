@@ -21,6 +21,7 @@ use CakeDC\OAuth\Server\Grant\Pkce;
 use CakeDC\OAuth\Server\Http\HttpResponder;
 use CakeDC\OAuthServer\OAuthServer;
 use CakeDC\OAuthServer\OAuthServerPlugin;
+use CakeDC\OAuthServer\Test\Support\BrokenCacheEngine;
 use CakeDC\OAuthServer\Test\Support\Fixtures;
 use CakeDC\OAuthServer\Test\Support\Html;
 
@@ -471,6 +472,46 @@ class OAuthControllerTest extends TestCase
         $this->configRequest($headers);
         $this->post('/oauth/token', ['grant_type' => 'x']);
         $this->assertResponseCode(429);
+    }
+
+    public function testRateLimitingFailsOpenWhenTheCacheFails(): void
+    {
+        Cache::setConfig('oauth_broken', ['className' => BrokenCacheEngine::class]);
+        Log::setConfig('oauth_cache_test', ['className' => 'Array', 'scopes' => ['oauth']]);
+        try {
+            $this->configure(['rateLimit' => ['cache' => 'oauth_broken', 'token' => [1, 60]]]);
+            $headers = ['headers' => ['Content-Type' => 'application/x-www-form-urlencoded']];
+            foreach ([1, 2] as $attempt) {
+                $this->configRequest($headers);
+                $this->post('/oauth/token', ['grant_type' => 'x']);
+                $this->assertResponseCode(400, 'attempt ' . $attempt);
+                $this->assertResponseContains('unsupported_grant_type');
+            }
+            /** @var \Cake\Log\Engine\ArrayLog $log */
+            $log = Log::engine('oauth_cache_test');
+            $this->assertStringContainsString(
+                'Rate limiting is off for this request: the cache failed (Connection refused).',
+                implode("\n", $log->read()),
+            );
+        } finally {
+            Log::drop('oauth_cache_test');
+            Cache::drop('oauth_broken');
+        }
+    }
+
+    public function testIntrospectionHasItsOwnRateLimit(): void
+    {
+        Cache::clear('default');
+        $this->configure(['rateLimit' => ['cache' => 'default', 'token' => [1, 60], 'introspect' => [5, 60]]]);
+        $headers = ['headers' => ['Content-Type' => 'application/x-www-form-urlencoded']];
+        foreach ([1, 2, 3] as $attempt) {
+            $this->configRequest($headers);
+            $this->post('/oauth/introspect', ['token' => 'x']);
+            $this->assertResponseCode(401, 'attempt ' . $attempt);
+        }
+        $this->configRequest($headers);
+        $this->post('/oauth/token', ['grant_type' => 'x']);
+        $this->assertResponseCode(400);
     }
 
     public function testRateLimitsKeyOnTheRealClientAddress(): void

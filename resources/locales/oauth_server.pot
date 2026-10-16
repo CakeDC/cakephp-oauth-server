@@ -18,6 +18,15 @@ msgstr ""
 msgid "Only continue if you just started this from an application on this computer: any program on this computer can use this address."
 msgstr ""
 
+msgid "An application on this computer"
+msgstr ""
+
+msgid "It calls itself {0}. Anyone can choose that name."
+msgstr ""
+
+msgid "You approved this application before. It is asked again because its identity cannot be confirmed: only continue if you started this yourself."
+msgstr ""
+
 msgid "Signed in as {0}."
 msgstr ""
 
@@ -37,6 +46,12 @@ msgid "Authorization failed"
 msgstr ""
 
 msgid "The application sent a request that cannot be completed."
+msgstr ""
+
+msgid "The application asked to send this answer to {0}. This server cannot confirm that {0} belongs to it: only continue if you trust it."
+msgstr ""
+
+msgid "Continue to {0}"
 msgstr ""
 
 msgid "Connected applications"
@@ -67,6 +82,9 @@ msgid "Revoke"
 msgstr ""
 
 msgid "Unverified: this application registered itself."
+msgstr ""
+
+msgid "{0} and an application on this computer"
 msgstr ""
 
 msgid "Personal access tokens"

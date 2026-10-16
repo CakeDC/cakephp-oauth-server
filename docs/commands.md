@@ -19,7 +19,11 @@ bin/cake oauth client add NAME [--redirect-uri URI]... [--confidential] [--grant
     [--scope SCOPE]... [--introspection] [--native]
 ```
 
-Registers a client (type `Registered`). `NAME` is the display name.
+Registers a client (type `Registered`). `NAME` is the display name: up to 255 characters, with at least one
+letter, number, punctuation or symbol, and without control characters, bidirectional controls or other
+invisible characters (the core's name rules; joiners inside Persian or Indic words and emoji sequences are
+fine). A name that breaks them prints the core's error and exits with a non-zero code. Private-use redirect URIs
+(`com.example.app:/oauth/callback`) are accepted here whatever `registration.allowPrivateSchemes` says.
 
 | Option | Meaning |
 | --- | --- |
@@ -96,9 +100,13 @@ bin/cake oauth token revoke --client CLIENT_ID
 
 | Option | Meaning |
 | --- | --- |
-| `--subject` | The person's id (the primary key of the users table). Revokes their access, refresh and personal tokens |
+| `--subject` | The person's id (the primary key of the users table). Revokes their access, refresh and personal tokens, and deletes the authorization codes they have not exchanged yet |
 | `--consents` | With `--subject`: also delete the person's remembered consents, so no client they approved before can skip the consent page |
-| `--client` | The client id. Revokes every token of that client (the client itself stays valid; use `oauth client revoke` to end it) |
+| `--client` | The client id. Revokes every token of that client and deletes its codes not exchanged yet (the client itself stays valid; use `oauth client revoke` to end it) |
+
+Pending codes are deleted before the tokens are revoked, so a code issued a moment before cannot open a new
+connection afterwards; an exchange already in flight either fails or has its tokens revoked. Exchanged codes are
+kept, so a replayed code still revokes what it issued.
 
 ```
 Revoked 4 token(s).
@@ -133,6 +141,10 @@ Run it daily:
 ```
 
 Pruning does not weaken the family lifetime cap: it is stored with every token (`family_started_at`).
+Pruning is safe while the application serves requests: each unused client is claimed with one conditional
+`UPDATE` inside its own transaction (after locking its row on MySQL, MariaDB and PostgreSQL) and deleted only
+when the claim succeeds, so a client that a request used, or gave a new token, after `oauth prune` picked it is
+kept with its token.
 More in the core's [operations](https://github.com/CakeDC/oauth-server/blob/1.x/docs/operations.md).
 
 ## oauth check
@@ -167,7 +179,7 @@ when any check fails, so it is suitable for a deployment pipeline.
 | Secret | `OAuthServer.secret` is shorter than 32 characters (fail), or is not set and `Security.salt` is missing or short (fail); a derived secret only warns |
 | Configuration | Builds the server the way the endpoints do (no request, no I/O) and fails when that is refused: an unknown key or a bad type in any section (the plugin's `users`, `consent`, `services` and so on included), an undeclared resource, a `tokenPrefix` that is not 1 to 16 lowercase letters or digits, a missing rate limit cache. Whatever fails here makes the endpoints answer 503 |
 | Issuer | The issuer is invalid (fail). Warns for plain http, for an issuer with a path (the RFC 8414 document must be served at the host root), and when the issuer path differs from a configured `App.base`. When `App.base` is `false` (Cake detects the directory per request) the CLI cannot compare them and says so instead of guessing |
-| Tables | Inspects the connection of the plugin's tables (not necessarily `default`; the message names it). Fails when a table is missing, a column of the current migrations is missing (such as `oauth_tokens.family_started_at`) or a unique key is missing (`client_id_hash`, `code_hash`, `token_hash`, and subject, client and resource of a consent): migrate, see [installation](installation.md#migrations). On MySQL and MariaDB it also fails when a column is not `utf8mb4_bin` |
+| Tables | Inspects the connection of the plugin's tables (not necessarily `default`; the message names it). Fails when a table is missing, a column of the current migrations is missing (such as `oauth_tokens.family_started_at`) or a unique key is missing (`client_id_hash`, `code_hash`, `token_hash`, and subject, client and resource of a consent): migrate, see [installation](installation.md#migrations). On MySQL and MariaDB it also fails when a column is not `utf8mb4_bin`. Warns when the index on `oauth_authorization_codes (subject)` is missing (copy `20261017120000_AddOAuthCodesSubjectIndex.php`): revoking a person or a connection then scans every code |
 | Users | The users table has no configured finder. A custom provider is reported as `custom user provider` |
 | Users integration | Only with `CakeDC/Users`: `OAuthServer.users` is invalid, or the integration's resource is at the host root with neither `OAuthServer.users.paths` nor `OAuthServer.tokenPaths` set (fail: the authenticator refuses every token); otherwise prints what the integration's Token authenticator validates and where. Warns when the one-time login authenticator (`Auth.Authenticators.OneTimeToken`) is not the plugin's guarded one, so it would read the `token` sent to the revoke and introspect endpoints ([cakedc-users](cakedc-users.md#one-time-login-links)) |
 | Login URL | Prints the resolved login URL; fails when it cannot be built. Warns when a local string URL matches no route or controller (another site's URL is not checked) |

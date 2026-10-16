@@ -3,7 +3,10 @@ declare(strict_types=1);
 
 namespace CakeDC\OAuthServer\Storage;
 
+use Cake\Database\Driver\Mysql;
+use Cake\Database\Driver\Postgres;
 use Cake\Database\Exception\DatabaseException;
+use Cake\Database\Expression\QueryExpression;
 use Cake\Datasource\EntityInterface;
 use Cake\ORM\Exception\PersistenceFailedException;
 use Cake\ORM\Locator\LocatorAwareTrait;
@@ -17,7 +20,6 @@ use CakeDC\OAuth\Server\Grant\Consent;
 use CakeDC\OAuth\Server\Maintenance\PruneResult;
 use CakeDC\OAuth\Server\Owner\SubjectType;
 use CakeDC\OAuth\Server\Storage\StorageInterface;
-use CakeDC\OAuth\Server\Support\Time;
 use CakeDC\OAuth\Server\Token\Token;
 use CakeDC\OAuth\Server\Token\TokenGenerator;
 use CakeDC\OAuth\Server\Token\TokenType;
@@ -30,8 +32,10 @@ use PDOException;
  * The core storage on the plugin's ORM tables.
  *
  * Datetime columns are pinned to UTC by the tables' schema, so instants never depend on the application's
- * default timezone. The one-shot operations (consuming a code, marking a refresh token used, revoking) are
- * single conditional UPDATE statements whose affected row count decides the winner.
+ * default timezone. Every decision that concurrent requests could race on is one statement whose affected row
+ * count decides the winner: a conditional UPDATE (consuming a code, marking a refresh token used, the revocations,
+ * the claim of a client in prune()) or a conditional DELETE (deleteCodesBySubject(), deleteCodesByClient()). A
+ * first consent saved twice at once falls back from the insert to an update on the unique key.
  */
 final class OrmStorage implements StorageInterface
 {
@@ -188,6 +192,34 @@ final class OrmStorage implements StorageInterface
         );
 
         return $changed === 1;
+    }
+
+    /**
+     * @inheritDoc
+     */
+    public function deleteCodesBySubject(string $subject, ?string $clientInternalId = null): int
+    {
+        $conditions = ['subject' => $subject, 'used_at IS' => null];
+        if ($clientInternalId !== null) {
+            if (!self::isId($clientInternalId)) {
+                return 0;
+            }
+            $conditions['oauth_client_id'] = $clientInternalId;
+        }
+
+        return $this->codes()->deleteAll($conditions);
+    }
+
+    /**
+     * @inheritDoc
+     */
+    public function deleteCodesByClient(string $clientInternalId): int
+    {
+        if (!self::isId($clientInternalId)) {
+            return 0;
+        }
+
+        return $this->codes()->deleteAll(['oauth_client_id' => $clientInternalId, 'used_at IS' => null]);
     }
 
     /**
@@ -420,44 +452,115 @@ final class OrmStorage implements StorageInterface
      */
     public function prune(DateTimeImmutable $now, int $retentionSeconds, int $unusedClientSeconds): PruneResult
     {
-        $cutoff = Time::plus($now, -$retentionSeconds);
+        $cutoff = self::plus($now, -$retentionSeconds);
         $codes = $this->codes()->deleteAll(['expires_at <' => $now]);
         $tokens = $this->tokens()->deleteAll(['OR' => [
             ['revoked_at IS NOT' => null, 'revoked_at <' => $cutoff],
             ['expires_at IS NOT' => null, 'expires_at <' => $cutoff],
         ]]);
-        $candidates = $this->clients()->find()
+        $created = self::plus($now, -$unusedClientSeconds);
+        $clientsTable = $this->clients();
+        $candidates = $clientsTable->find()
             ->select(['id'])
-            ->where([
-                'type IN' => [ClientType::Dynamic->value, ClientType::MetadataDocument->value],
-                'revoked_at IS' => null,
-                'created <' => Time::plus($now, -$unusedClientSeconds),
-                'OR' => ['last_used_at IS' => null, 'last_used_at <' => $cutoff],
-            ])
+            ->where($this->unusedClient($clientsTable->getAlias(), $now, $cutoff, $created))
             ->all()
             ->extract('id')
             ->toList();
+        $connection = $clientsTable->getConnection();
+        $driver = $connection->getDriver();
+        $locks = $driver instanceof Mysql || $driver instanceof Postgres;
         $clients = 0;
         foreach ($candidates as $id) {
-            $live = $this->tokens()->find()->where([
-                'oauth_client_id' => $id,
-                'revoked_at IS' => null,
-                'OR' => ['expires_at IS' => null, 'expires_at >' => $now],
-            ])->count();
-            if ($live > 0) {
-                continue;
-            }
-            $this->clients()->getConnection()->transactional(
-                function () use ($id, &$tokens, &$codes, &$clients): void {
+            $connection->transactional(
+                function () use ($id, $now, $cutoff, $created, $locks, &$tokens, &$codes, &$clients): bool {
+                    if (!$this->claimUnusedClient((string)$id, $now, $cutoff, $created, $locks)) {
+                        // Used since it was selected: keep it.
+                        return false;
+                    }
                     $tokens += $this->tokens()->deleteAll(['oauth_client_id' => $id]);
                     $codes += $this->codes()->deleteAll(['oauth_client_id' => $id]);
                     $this->consents()->deleteAll(['oauth_client_id' => $id]);
                     $clients += $this->clients()->deleteAll(['id' => $id]);
+
+                    return true;
                 },
             );
         }
 
         return new PruneResult($codes, $tokens, $clients);
+    }
+
+    /**
+     * The conditions of an unused client, whose table is $table (its alias in a select, its name in an update): a
+     * dynamic or metadata document client, not revoked, created before $created and last used before $cutoff, with
+     * no live token.
+     *
+     * @param string $table The alias or name the outer query gives the clients table.
+     * @param \DateTimeImmutable $now Now.
+     * @param \DateTimeImmutable $cutoff Last use before this.
+     * @param \DateTimeImmutable $created Created before this.
+     * @return array<string|int, mixed>
+     */
+    private function unusedClient(
+        string $table,
+        DateTimeImmutable $now,
+        DateTimeImmutable $cutoff,
+        DateTimeImmutable $created,
+    ): array {
+        $tokens = $this->tokens();
+        $alias = $tokens->getAlias();
+        $live = $tokens->find()
+            ->select([$alias . '.id'])
+            ->where(fn(QueryExpression $exp): QueryExpression => $exp->equalFields(
+                $alias . '.oauth_client_id',
+                $table . '.id',
+            ))
+            ->where([
+                $alias . '.revoked_at IS' => null,
+                'OR' => [$alias . '.expires_at IS' => null, $alias . '.expires_at >' => $now],
+            ]);
+
+        // The client's own columns are not qualified: the update's type map knows them by their bare names.
+        return [
+            'type IN' => [ClientType::Dynamic->value, ClientType::MetadataDocument->value],
+            'revoked_at IS' => null,
+            'created <' => $created,
+            'OR' => ['last_used_at IS' => null, 'last_used_at <' => $cutoff],
+            (new QueryExpression())->notExists($live),
+        ];
+    }
+
+    /**
+     * Claims a pruning candidate inside the open transaction; true when it is still unused. The check and the claim
+     * are one conditional UPDATE (it marks the row revoked until the deletion commits or rolls back), so a request
+     * that used the client after it was selected (it recorded a use or saved a live token) keeps it. On MySQL and
+     * PostgreSQL the row is locked first: that waits for a request inserting a token of this client right now (its
+     * foreign key check locks the row) and holds off later ones until the deletion is committed. SQLite has one
+     * writer at a time, and the claim is the transaction's first statement.
+     *
+     * @param string $id The client's internal id.
+     * @param \DateTimeImmutable $now Now.
+     * @param \DateTimeImmutable $cutoff Last use before this.
+     * @param \DateTimeImmutable $created Created before this.
+     * @param bool $lock Whether to lock the row first.
+     * @return bool
+     */
+    private function claimUnusedClient(
+        string $id,
+        DateTimeImmutable $now,
+        DateTimeImmutable $cutoff,
+        DateTimeImmutable $created,
+        bool $lock,
+    ): bool {
+        $clients = $this->clients();
+        if ($lock) {
+            $clients->find()->select(['id'])->where(['id' => $id])->epilog('FOR UPDATE')->all();
+        }
+
+        return $clients->updateAll(
+            ['revoked_at' => $now],
+            ['id' => $id] + $this->unusedClient($clients->getTable(), $now, $cutoff, $created),
+        ) === 1;
     }
 
     /**
@@ -632,7 +735,19 @@ final class OrmStorage implements StorageInterface
             return DateTimeImmutable::createFromInterface($value)->setTimezone(new DateTimeZone('UTC'));
         }
 
-        return Time::parse((string)$value);
+        return new DateTimeImmutable((string)$value, new DateTimeZone('UTC'));
+    }
+
+    /**
+     * $at moved by $seconds (negative goes back).
+     *
+     * @param \DateTimeImmutable $at The time.
+     * @param int $seconds Seconds.
+     * @return \DateTimeImmutable
+     */
+    private static function plus(DateTimeImmutable $at, int $seconds): DateTimeImmutable
+    {
+        return $at->setTimestamp($at->getTimestamp() + $seconds);
     }
 
     /**

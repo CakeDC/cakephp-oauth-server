@@ -15,6 +15,7 @@ use CakeDC\OAuthServer\Http\RequestPaths;
 use CakeDC\OAuthServer\Identity\OrmUserProvider;
 use InvalidArgumentException;
 use Psr\Clock\ClockInterface;
+use SensitiveParameter;
 use Throwable;
 
 /**
@@ -52,7 +53,7 @@ final class PluginConfig
     /**
      * @param array<string, mixed> $settings The `OAuthServer` configuration.
      */
-    public function __construct(private readonly array $settings)
+    public function __construct(#[SensitiveParameter] private readonly array $settings)
     {
     }
 
@@ -87,7 +88,7 @@ final class PluginConfig
      * @return \CakeDC\OAuth\Server\Config\ServerConfig
      * @throws \InvalidArgumentException
      */
-    private function buildServerConfig(?string $secret): ServerConfig
+    private function buildServerConfig(#[SensitiveParameter] ?string $secret): ServerConfig
     {
         $core = array_diff_key($this->settings, self::PLUGIN_SECTIONS);
         $core['issuer'] = $this->configuredIssuer();

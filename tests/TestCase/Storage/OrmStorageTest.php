@@ -3,12 +3,17 @@ declare(strict_types=1);
 
 namespace CakeDC\OAuthServer\Test\TestCase\Storage;
 
+use Cake\Collection\CollectionInterface;
+use Cake\Event\EventInterface;
 use Cake\Log\Engine\ArrayLog;
 use Cake\ORM\Locator\LocatorAwareTrait;
+use Cake\ORM\Query\SelectQuery;
+use CakeDC\OAuth\Server\Client\ClientType;
 use CakeDC\OAuth\Server\Grant\Consent;
 use CakeDC\OAuth\Server\Storage\StorageInterface;
 use CakeDC\OAuth\Server\Support\Uuid;
 use CakeDC\OAuth\Server\Testing\StorageContractTestCase;
+use CakeDC\OAuth\Server\Token\TokenType;
 use CakeDC\OAuthServer\Storage\OrmStorage;
 use DateTimeImmutable;
 use DateTimeZone;
@@ -147,6 +152,70 @@ class OrmStorageTest extends StorageContractTestCase
         $this->assertCount(1, $consents);
         $this->assertSame(['content:read'], $consents[0]->scopes);
         $this->assertEquals($this->at(100), $consents[0]->modifiedAt);
+    }
+
+    /**
+     * Runs $hook once, after prune() selected its candidates and before it deletes the first one.
+     *
+     * @param callable(): void $hook The work of a concurrent request.
+     * @return void
+     */
+    private function afterPruneSelectsItsCandidates(callable $hook): void
+    {
+        $table = $this->fetchTable('CakeDC/OAuthServer.OauthClients');
+        $table->getEventManager()->on(
+            'Model.beforeFind',
+            function (EventInterface $event, SelectQuery $query) use ($table, $hook): void {
+                $table->getEventManager()->off('Model.beforeFind');
+                $query->formatResults(function (CollectionInterface $results) use ($hook): CollectionInterface {
+                    $hook();
+
+                    return $results;
+                });
+            },
+        );
+    }
+
+    /**
+     * A request that uses a pruning candidate after prune() selected it keeps the client: the check is repeated by
+     * the statement that claims the client for deletion.
+     *
+     * @return void
+     */
+    public function testPruneKeepsAClientUsedAfterItWasSelected(): void
+    {
+        $storage = $this->createStorage();
+        $client = $this->makeClient(ClientType::Dynamic);
+        $storage->saveClient($client);
+        $this->afterPruneSelectsItsCandidates(fn() => $storage->touchClient($client->id, $this->at(10 * 86400)));
+
+        $result = $storage->prune($this->at(10 * 86400), 2 * 86400, 86400);
+
+        $this->assertSame(0, $result->clients);
+        $kept = $storage->findClientById($client->id);
+        $this->assertNotNull($kept, 'A client used after it was selected was pruned.');
+        $this->assertNull($kept->revokedAt, 'The claim of a kept client must not show.');
+    }
+
+    /**
+     * A token saved for a pruning candidate after prune() selected it keeps the client and the token.
+     *
+     * @return void
+     */
+    public function testPruneKeepsAClientThatGotALiveTokenAfterItWasSelected(): void
+    {
+        $storage = $this->createStorage();
+        $client = $this->makeClient(ClientType::Dynamic);
+        $storage->saveClient($client);
+        $token = $this->makeToken($client, TokenType::Refresh, expiresIn: 30 * 86400, createdAt: 10 * 86400);
+        $this->afterPruneSelectsItsCandidates(fn() => $storage->saveToken($token));
+
+        $result = $storage->prune($this->at(10 * 86400), 2 * 86400, 86400);
+
+        $this->assertSame(0, $result->clients);
+        $this->assertSame(0, $result->tokens);
+        $this->assertNotNull($storage->findClientById($client->id));
+        $this->assertNotNull($storage->findTokenById($token->id), 'The new token was deleted with its client.');
     }
 
     /**

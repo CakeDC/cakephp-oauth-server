@@ -20,6 +20,15 @@ msgstr "Esta aplicación se registró sola; su nombre no está verificado."
 msgid "Only continue if you just started this from an application on this computer: any program on this computer can use this address."
 msgstr "Continúa solo si acabas de iniciar esto desde una aplicación de este equipo: cualquier programa de este equipo puede usar esta dirección."
 
+msgid "An application on this computer"
+msgstr "Una aplicación de este equipo"
+
+msgid "It calls itself {0}. Anyone can choose that name."
+msgstr "Se hace llamar {0}. Cualquiera puede elegir ese nombre."
+
+msgid "You approved this application before. It is asked again because its identity cannot be confirmed: only continue if you started this yourself."
+msgstr "Ya aprobaste esta aplicación antes. Se te vuelve a preguntar porque no se puede confirmar su identidad: continúa solo si iniciaste esto tú."
+
 msgid "Signed in as {0}."
 msgstr "Has iniciado sesión como {0}."
 
@@ -40,6 +49,12 @@ msgstr "La autorización falló"
 
 msgid "The application sent a request that cannot be completed."
 msgstr "La aplicación envió una solicitud que no se puede completar."
+
+msgid "The application asked to send this answer to {0}. This server cannot confirm that {0} belongs to it: only continue if you trust it."
+msgstr "La aplicación pidió enviar esta respuesta a {0}. Este servidor no puede confirmar que {0} pertenezca a esa aplicación: continúa solo si confías en {0}."
+
+msgid "Continue to {0}"
+msgstr "Continuar a {0}"
 
 msgid "Connected applications"
 msgstr "Aplicaciones conectadas"
@@ -70,6 +85,9 @@ msgstr "Revocar"
 
 msgid "Unverified: this application registered itself."
 msgstr "Sin verificar: esta aplicación se registró sola."
+
+msgid "{0} and an application on this computer"
+msgstr "{0} y una aplicación de este equipo"
 
 msgid "Personal access tokens"
 msgstr "Tokens personales"

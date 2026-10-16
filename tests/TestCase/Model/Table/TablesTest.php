@@ -48,6 +48,8 @@ class TablesTest extends TestCase
                 'oauth_authorization_codes_code_hash' => ['code_hash'],
                 'oauth_authorization_codes_oauth_client_id' => ['oauth_client_id'],
                 'oauth_authorization_codes_expires_at' => ['expires_at'],
+                // Revoking a person or a connection deletes their pending codes by subject.
+                'oauth_authorization_codes_subject' => ['subject'],
             ],
             'oauth_tokens' => [
                 'oauth_tokens_token_hash' => ['token_hash'],

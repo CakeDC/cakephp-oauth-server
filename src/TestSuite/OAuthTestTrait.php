@@ -12,6 +12,7 @@ use CakeDC\OAuthServer\Identity\OrmUserProvider;
 use CakeDC\OAuthServer\Server\ServerFactory;
 use InvalidArgumentException;
 use LogicException;
+use SensitiveParameter;
 
 /**
  * Issues tokens in tests that use IntegrationTestTrait, without going through the OAuth flow.
@@ -93,7 +94,7 @@ trait OAuthTestTrait
      * @param string $token The token.
      * @return void
      */
-    protected function withOAuthToken(string $token): void
+    protected function withOAuthToken(#[SensitiveParameter] string $token): void
     {
         // configRequest() merges recursively, so a second call would send two Authorization values.
         $headers = is_array($this->_request['headers'] ?? null) ? $this->_request['headers'] : [];

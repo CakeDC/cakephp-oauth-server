@@ -56,11 +56,16 @@ with the same shape as the core's `schema/*.sql`: ids are `CHAR(36)`, `oauth_tok
 `family_started_at`, and on MySQL and MariaDB the tables use `utf8mb4_bin` so subjects compare case
 sensitively. See [deployment](deployment.md#database).
 
-If all of your application's migrations live in `config/Migrations/`, copy the plugin's file
-(`config/Migrations/20261016120000_CreateOAuthServerTables.php`) there unchanged and run
+If all of your application's migrations live in `config/Migrations/`, copy the plugin's files
+(`config/Migrations/20261016120000_CreateOAuthServerTables.php` and
+`config/Migrations/20261017120000_AddOAuthCodesSubjectIndex.php`) there unchanged and run
 `bin/cake migrations migrate` as usual. Do not run both. Later schema changes ship as new migration
 files in the plugin; copy them the same way, and run `bin/cake oauth check`, which tells you when a table
 is out of date.
+
+The second file adds an index on `oauth_authorization_codes (subject)`, which revoking a person or one of their
+connections uses to delete the codes they have not exchanged yet. It only adds the index, and does nothing when
+the index exists already.
 
 ## CSRF
 

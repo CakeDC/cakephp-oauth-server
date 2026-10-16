@@ -5,22 +5,35 @@
  */
 
 use CakeDC\OAuth\Server\Client\ClientType;
+use CakeDC\OAuthServer\View\QuotedName;
 
-// A client described by a metadata document names itself; the host of its client_id URL is what can
-// be trusted, so that is what the headline and the title show.
-$clientHost = $consent->clientHost();
-$clientName = $consent->client->type === ClientType::MetadataDocument && $clientHost !== ''
-    ? $clientHost
-    : $consent->client->name;
-$this->assign('title', h(__d('oauth_server', 'Authorize {0}', $clientName)));
+// A name is chosen by the client, so the title and the heading use what it cannot choose freely
+// (ConsentView::clientLabel(): a registered client's name, the client_id host of a metadata document, the host a
+// self-registered client's answer goes to), or a fixed text when no host names it (a private-use redirect).
+$label = $consent->clientLabel();
+$client = $label !== '' ? $label : __d('oauth_server', 'An application on this computer');
+$from = $consent->clientHost() !== '' ? $consent->clientHost() : $consent->redirectHost();
+if ($consent->client->type === ClientType::Dynamic && $consent->clientHost() === '') {
+    // The scheme of a private-use redirect is chosen by the client: it is shown only as the destination.
+    $from = $client;
+}
+// The name the client declared, as an unverified quote whose boundary is markup.
+$declared = $consent->declaredName() === null ? null : QuotedName::html(
+    __d('oauth_server', 'It calls itself {0}. Anyone can choose that name.', QuotedName::PLACEHOLDER),
+    $consent->declaredName(),
+);
+$this->assign('title', h(__d('oauth_server', 'Authorize {0}', $client)));
 ?>
-<h1><?= h(__d('oauth_server', '{0} wants to access {1}', $clientName, $consent->resource->name)) ?></h1>
+<h1><?= h(__d('oauth_server', '{0} wants to access {1}', $client, $consent->resource->name)) ?></h1>
 <p class="oauth-muted"><?= h(__d(
     'oauth_server',
     'The request comes from {0}. Your answer is sent to {1}.',
-    $clientHost !== '' ? $clientHost : $consent->redirectHost(),
+    $from,
     $consent->redirectHost(),
 )) ?></p>
+<?php if ($declared !== null) : ?>
+    <p class="oauth-muted"><?= $declared ?></p>
+<?php endif; ?>
 <?php if ($consent->isUnverified()) : ?>
     <p class="oauth-warning"><?= h(__d(
         'oauth_server',
@@ -32,6 +45,13 @@ $this->assign('title', h(__d('oauth_server', 'Authorize {0}', $clientName)));
         'oauth_server',
         'Only continue if you just started this from an application on this computer: '
         . 'any program on this computer can use this address.',
+    )) ?></p>
+<?php endif; ?>
+<?php if ($consent->approvedBefore) : ?>
+    <p class="oauth-warning"><?= h(__d(
+        'oauth_server',
+        'You approved this application before. It is asked again because its identity cannot be confirmed: '
+        . 'only continue if you started this yourself.',
     )) ?></p>
 <?php endif; ?>
 <p><?= h(__d('oauth_server', 'Signed in as {0}.', $consent->owner->displayName)) ?></p>

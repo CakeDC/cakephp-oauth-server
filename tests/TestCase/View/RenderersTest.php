@@ -21,6 +21,8 @@ use CakeDC\OAuth\Server\Token\Token;
 use CakeDC\OAuth\Server\Token\TokenType;
 use CakeDC\OAuth\Server\View\ConnectionsView;
 use CakeDC\OAuth\Server\View\ConsentView;
+use CakeDC\OAuth\Server\View\RedirectNoticeRendererInterface;
+use CakeDC\OAuth\Server\View\RedirectNoticeView;
 use CakeDC\OAuthServer\Test\Support\Html;
 use CakeDC\OAuthServer\View\CakeConnectionsRenderer;
 use CakeDC\OAuthServer\View\CakeConsentRenderer;
@@ -77,18 +79,22 @@ class RenderersTest extends TestCase
         bool $offline = true,
         string $action = '/oauth/authorize',
         ?ServerRequest $request = null,
+        ?string $redirect = null,
+        bool $approvedBefore = false,
     ): string {
         $request ??= (new ServerRequest())->withAttribute('csrfToken', 'csrf-value');
+        $client ??= $this->client();
 
         return (new CakeConsentRenderer($request, null))->render(new ConsentView(
-            $client ?? $this->client(),
+            $client,
             new ResourceOwner('1', 'Ada'),
             $this->resource(),
             ['content:read' => 'Read your posts'],
             $offline,
-            self::CALLBACK,
+            $redirect ?? $client->redirectUris[0],
             $action,
             ['client_id' => 'abc', 'consent_token' => 't'],
+            $approvedBefore,
         ));
     }
 
@@ -172,7 +178,13 @@ class RenderersTest extends TestCase
     {
         $html = $this->consent();
 
-        $this->assertStringContainsString('Claude &lt;AI&gt; wants to access Test MCP', $html);
+        // A self-registered client is headlined by the host its answer goes to; its name is only quoted.
+        $this->assertStringContainsString('<h1>claude.ai wants to access Test MCP</h1>', $html);
+        $this->assertStringContainsString(
+            'It calls itself <q>Claude &lt;AI&gt;</q>. Anyone can choose that name.',
+            $html,
+        );
+        $this->assertStringContainsString('The request comes from claude.ai. Your answer is sent to claude.ai.', $html);
         $this->assertStringContainsString('not verified', $html);
         $this->assertStringContainsString('Signed in as Ada.', $html);
         $this->assertStringContainsString('Read your posts', $html);
@@ -184,8 +196,122 @@ class RenderersTest extends TestCase
         $this->assertArrayHasKey('_csrfToken', $fields);
         $this->assertStringContainsString('name="decision" value="approve"', $html);
         $this->assertStringContainsString('name="decision" value="deny"', $html);
-        $this->assertStringContainsString('<title>Authorize Claude &lt;AI&gt;</title>', $html);
+        $this->assertStringContainsString('<title>Authorize claude.ai</title>', $html);
         $this->assertStringNotContainsString('Claude <AI>', $html);
+        $this->assertStringNotContainsString('approved this application before', $html);
+    }
+
+    /**
+     * A name and the registered redirect URIs are chosen by a self-registered client: neither may make the page
+     * read like another client. The title, the heading and the "from" line use the host the answer goes to.
+     *
+     * @return void
+     */
+    public function testADynamicClientCannotBorrowAnotherClientsNameOrListedHost(): void
+    {
+        $client = $this->client(ClientType::Dynamic, 'abc', 'claude.ai', [self::CALLBACK, 'https://evil.example/cb']);
+        $html = $this->consent($client, true, '/oauth/authorize', null, 'https://evil.example/cb');
+
+        $this->assertStringContainsString('<title>Authorize evil.example</title>', $html);
+        $this->assertStringContainsString('<h1>evil.example wants to access Test MCP</h1>', $html);
+        $this->assertStringContainsString(
+            'The request comes from evil.example. Your answer is sent to evil.example.',
+            $html,
+        );
+        $this->assertStringContainsString('It calls itself <q>claude.ai</q>. Anyone can choose that name.', $html);
+        $this->assertStringNotContainsString('claude.ai wants', $html);
+        $this->assertStringNotContainsString('from claude.ai', $html);
+        $this->assertStringNotContainsString('Authorize claude.ai', $html);
+    }
+
+    /**
+     * Anyone can claim a private-use scheme, `claude.ai:` included: such a client is "an application on this
+     * computer", and the scheme only says where the answer goes.
+     *
+     * @return void
+     */
+    public function testAPrivateSchemeIsShownAsTheDestinationAndNeverAsTheRequester(): void
+    {
+        $client = $this->client(ClientType::Dynamic, 'abc', 'Claude', ['claude.ai:/oauth/callback']);
+        $html = $this->consent($client);
+
+        $this->assertStringContainsString('<title>Authorize An application on this computer</title>', $html);
+        $this->assertStringContainsString('<h1>An application on this computer wants to access Test MCP</h1>', $html);
+        $this->assertStringContainsString(
+            'The request comes from An application on this computer. Your answer is sent to claude.ai.',
+            $html,
+        );
+        $this->assertStringContainsString('It calls itself <q>Claude</q>. Anyone can choose that name.', $html);
+        $this->assertStringContainsString('any program on this computer can use this address', $html);
+        $this->assertStringNotContainsString('Claude wants', $html);
+        $this->assertStringNotContainsString('claude.ai wants', $html);
+    }
+
+    /**
+     * The boundary of a declared name is drawn in markup, so a name with quote characters cannot close it and go
+     * on as if the server were speaking.
+     *
+     * @return void
+     */
+    public function testTheDeclaredNameIsQuotedInMarkup(): void
+    {
+        $html = $this->consent($this->client(ClientType::Dynamic, 'abc', 'Claude". Verified publisher. "'));
+
+        $this->assertStringContainsString(
+            'It calls itself <q>Claude&quot;. Verified publisher. &quot;</q>. Anyone can choose that name.',
+            $html,
+        );
+        $this->assertSame(1, substr_count($html, '<q>'));
+    }
+
+    /**
+     * A translation that drops the placeholder must not hide the declared name.
+     *
+     * @return void
+     */
+    public function testATranslationWithoutThePlaceholderStillShowsTheName(): void
+    {
+        $package = new Package('default');
+        $package->setMessages(['It calls itself {0}. Anyone can choose that name.' => 'Zelfgekozen naam.']);
+        // A locale no other test uses: translators are cached per domain and locale for the whole run.
+        I18n::setTranslator('oauth_server', fn(): Package => $package, 'nl');
+
+        $html = $this->withLocale('nl', fn() => $this->consent());
+
+        $this->assertStringContainsString('Zelfgekozen naam. <q>Claude &lt;AI&gt;</q>', $html);
+    }
+
+    /**
+     * A name that only repeats the host is not quoted again.
+     *
+     * @return void
+     */
+    public function testANameThatIsTheHostIsNotRepeated(): void
+    {
+        $html = $this->consent($this->client(ClientType::Dynamic, 'abc', 'claude.ai'));
+
+        $this->assertStringContainsString('<h1>claude.ai wants to access Test MCP</h1>', $html);
+        $this->assertStringNotContainsString('<q>', $html);
+        $this->assertStringContainsString('not verified', $html);
+    }
+
+    /**
+     * A remembered consent of a client whose identity cannot be assured: the page says so.
+     *
+     * @return void
+     */
+    public function testTheApprovedBeforeLine(): void
+    {
+        $client = $this->client(ClientType::Dynamic, 'abc', 'CLI', ['http://127.0.0.1:8123/cb']);
+        $html = $this->consent($client, false, '/oauth/authorize', null, null, true);
+
+        $this->assertStringContainsString(
+            'You approved this application before. It is asked again because its identity cannot be confirmed: '
+            . 'only continue if you started this yourself.',
+            $html,
+        );
+        $this->assertStringContainsString('any program on this computer can use this address', $html);
+        $this->assertStringNotContainsString('approved this application before', $this->consent($client, false));
     }
 
     /**
@@ -409,7 +535,7 @@ class RenderersTest extends TestCase
 
         $this->assertStringContainsString('cimd.example.com', $html);
         $this->assertStringNotContainsString('Your Bank', $html);
-        $this->assertStringContainsString('Dyn &lt;x&gt;', $html);
+        $this->assertStringContainsString('It calls itself <q>Dyn &lt;x&gt;</q>. Anyone can choose that name.', $html);
         $this->assertStringContainsString('Unverified: this application registered itself.', $html);
         $this->assertStringContainsString('2026-01-02 03:04 UTC', $html);
         $this->assertStringContainsString('Never', $html);
@@ -421,6 +547,45 @@ class RenderersTest extends TestCase
         $this->assertSame('form-token', Html::hiddenFields($html, 'token_id')['form_token']);
         $this->assertSame('csrf-value', Html::hiddenFields($html, 'family_id')['_csrfToken']);
         $this->assertSame('csrf-value', Html::hiddenFields($html, 'token_id')['_csrfToken']);
+    }
+
+    /**
+     * On the connections page a self-registered client is labelled by the hosts of its redirect URIs, never by
+     * its name: a fixed text for private-use schemes, both for a mixed client.
+     *
+     * @return void
+     */
+    public function testDynamicClientsAreLabelledByTheirRedirectHosts(): void
+    {
+        $cell = function (array $redirects, string $name): string {
+            $html = $this->connections([$this->connection($this->client(ClientType::Dynamic, 'd', $name, $redirects))]);
+            preg_match('#<tr>\s*<td>(.*?)</td>#s', $html, $matches);
+
+            return trim(preg_replace('/\s+/', ' ', $matches[1] ?? '') ?? '');
+        };
+
+        $web = $cell(['https://a.example/cb', 'https://B.example/cb', 'https://a.example/other'], 'Claude');
+        $this->assertStringStartsWith('a.example, b.example<br>', $web);
+        $this->assertStringContainsString('It calls itself <q>Claude</q>.', $web);
+        $this->assertStringContainsString('Unverified: this application registered itself.', $web);
+
+        $local = $cell(['claude.ai:/cb'], 'Claude');
+        $this->assertStringStartsWith('An application on this computer<br>', $local);
+        $this->assertStringContainsString('<q>Claude</q>', $local);
+
+        $mixed = $cell(['https://app.example/cb', 'com.example.app:/cb'], 'Claude');
+        $this->assertStringStartsWith('app.example and an application on this computer<br>', $mixed);
+        $this->assertStringContainsString('<q>Claude</q>', $mixed);
+
+        $same = $cell(['https://app.example/cb'], 'app.example');
+        $this->assertStringStartsWith('app.example<br>', $same);
+        $this->assertStringNotContainsString('<q>', $same);
+        $this->assertStringContainsString('Unverified', $same);
+
+        foreach ([$web, $local, $mixed] as $html) {
+            $this->assertStringNotContainsString('Claude<br>', $html);
+            $this->assertStringStartsNotWith('Claude', $html);
+        }
     }
 
     /**
@@ -469,11 +634,98 @@ class RenderersTest extends TestCase
     public function testTheErrorPageAndNoLayout(): void
     {
         $html = (new CakeErrorPageRenderer(new ServerRequest(), false))
-            ->render(OAuthException::invalidRequest('"redirect_uri" is <wrong>.'));
+            ->render(OAuthException::invalidRequest("'redirect_uri' is <wrong>."));
 
         $this->assertStringContainsString('Authorization failed', $html);
-        $this->assertStringContainsString('&quot;redirect_uri&quot; is &lt;wrong&gt;.', $html);
+        $this->assertStringContainsString('&#039;redirect_uri&#039; is &lt;wrong&gt;.', $html);
         $this->assertStringContainsString('invalid_request', $html);
         $this->assertStringNotContainsString('<html', $html);
+        $this->assertStringNotContainsString('<a ', $html);
+    }
+
+    /**
+     * The page shown instead of a redirect to an untrusted client: the destination host and a plain link the person
+     * may follow, never followed by the page itself.
+     *
+     * @return void
+     */
+    public function testTheRedirectNoticeNamesTheHostAndOnlyLinksToIt(): void
+    {
+        $renderer = new CakeErrorPageRenderer(new ServerRequest(), null);
+        $this->assertInstanceOf(RedirectNoticeRendererInterface::class, $renderer);
+        $continue = 'https://evil.example/login?error=invalid_request&state=%22%3E%3Cscript%3E&x="><script>';
+        $html = $renderer->renderRedirectNotice(new RedirectNoticeView(
+            OAuthException::invalidRequest('Something is <wrong>.'),
+            $this->client(ClientType::Dynamic, 'abc', 'claude.ai', ['https://evil.example/login']),
+            'https://evil.example/login',
+            $continue,
+        ));
+
+        $this->assertStringContainsString('<h1>Authorization failed</h1>', $html);
+        $this->assertStringContainsString('Something is &lt;wrong&gt;.', $html);
+        $this->assertStringContainsString(
+            'The application asked to send this answer to evil.example. This server cannot confirm that evil.example '
+            . 'belongs to it: only continue if you trust it.',
+            $html,
+        );
+        $this->assertStringContainsString(
+            '<a href="' . h($continue) . '" rel="noreferrer">Continue to evil.example</a>',
+            $html,
+        );
+        $this->assertStringNotContainsString('<script', $html);
+        $this->assertStringNotContainsString('http-equiv', $html);
+        $this->assertStringNotContainsString('claude.ai', $html);
+        $this->assertSame(1, substr_count($html, '<a '));
+    }
+
+    /**
+     * For a private-use redirect URI the notice names the scheme, which is all that can be said about it.
+     *
+     * @return void
+     */
+    public function testTheRedirectNoticeOfAPrivateSchemeNamesTheScheme(): void
+    {
+        $html = (new CakeErrorPageRenderer(new ServerRequest(), false))->renderRedirectNotice(new RedirectNoticeView(
+            OAuthException::invalidRequest('x'),
+            null,
+            'com.example.app:/oauth/callback',
+            'com.example.app:/oauth/callback?error=invalid_request',
+        ));
+
+        $this->assertStringContainsString('Continue to com.example.app</a>', $html);
+        $this->assertStringContainsString('href="com.example.app:/oauth/callback?error=invalid_request"', $html);
+    }
+
+    /**
+     * @return void
+     */
+    public function testTheNewLinesAreTranslatedToSpanish(): void
+    {
+        $consent = $this->withLocale('es', fn() => $this->consent(
+            $this->client(ClientType::Dynamic, 'abc', 'Claude', ['claude.ai:/cb']),
+            true,
+            '/oauth/authorize',
+            null,
+            null,
+            true,
+        ));
+        $this->assertStringContainsString('Una aplicación de este equipo quiere acceder a Test MCP', $consent);
+        $this->assertStringContainsString('Se hace llamar <q>Claude</q>. Cualquiera puede elegir ese nombre.', $consent);
+        $this->assertStringContainsString('Ya aprobaste esta aplicación antes.', $consent);
+
+        $notice = $this->withLocale('es', fn() => (new CakeErrorPageRenderer(new ServerRequest(), false))
+            ->renderRedirectNotice(new RedirectNoticeView(
+                OAuthException::invalidRequest('x'),
+                null,
+                'https://evil.example/cb',
+                'https://evil.example/cb?error=invalid_request',
+            )));
+        $this->assertStringContainsString('Continuar a evil.example', $notice);
+        $this->assertStringContainsString('La aplicación pidió enviar esta respuesta a evil.example.', $notice);
+
+        $connections = $this->withLocale('es', fn() => $this->connections([
+            $this->connection($this->client(ClientType::Dynamic, 'd', 'Claude', ['https://a.example/cb', 'x.y:/cb'])),
+        ]));
+        $this->assertStringContainsString('a.example y una aplicación de este equipo', $connections);
     }
 }

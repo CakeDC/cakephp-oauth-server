@@ -26,6 +26,7 @@ use CakeDC\OAuthServer\View\CakeConnectionsRenderer;
 use CakeDC\OAuthServer\View\CakeConsentRenderer;
 use CakeDC\OAuthServer\View\CakeErrorPageRenderer;
 use CakeDC\OAuthServer\View\CakeTemplateRenderer;
+use CakeDC\OAuthServer\View\QuotedName;
 use ReflectionClass;
 use ReflectionMethod;
 
@@ -52,7 +53,7 @@ class PublicApiTest extends TestCase
         $public = [
             OAuthServerPlugin::class, OAuthServer::class, TokenAuthenticator::class,
             OAuthServerTokenAuthenticator::class, OAuthIdentity::class, OrmStorage::class, OrmUserProvider::class,
-            SessionUserContext::class,
+            SessionUserContext::class, QuotedName::class,
         ];
         foreach ($public as $class) {
             $this->assertStringNotContainsString('@internal', (string)(new ReflectionClass($class))->getDocComment(), $class);

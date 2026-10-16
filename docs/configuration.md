@@ -45,22 +45,35 @@ These are documented in full in the core's
 
 Nested defaults: `lifetimes` `code` 60, `access` 3600, `refresh` 2592000, `family` 31536000, `personalMax`
 7776000, `refreshReuseGrace` 30 (all seconds). `registration` `mode` is `open`, `initialAccessToken`
-`null`, `allowPrivateSchemes` `true`. `cimd` `enabled` `true`, `allowedHosts` `null` (any host),
+`null`, `allowPrivateSchemes` `false`. `cimd` `enabled` `true`, `allowedHosts` `null` (any host),
 `timeout` 5, `maxBytes` 10240, `cacheMin` 300, `cacheMax` 86400. `rateLimit` `authorize` `[30, 60]`,
-`token` `[60, 60]`, `register` `[10, 3600]`, `cimd` `[10, 60]` (each is `[requests, seconds]`).
+`token` `[60, 60]`, `register` `[10, 3600]`, `cimd` `[10, 60]`, `introspect` `[600, 60]` (each is
+`[requests, seconds]`; `/revoke` counts against `token`, `/introspect` against `rateLimit.introspect`).
 
 Behaviour behind these keys that is worth knowing before production:
 
+- **Private-use schemes are off.** `registration.allowPrivateSchemes` is `false`: dynamic registration and
+  metadata documents accept https and loopback http redirect URIs only, as the MCP authorization spec requires.
+  Set it to `true` for native clients that redirect to a scheme such as `com.example.app:/oauth/callback`; the
+  consent page then calls such a self-registered client "An application on this computer" and asks every time.
+  Clients you add with `oauth client add` may always use such schemes. A dynamic registration without
+  `application_type` is `native` when none of its redirect URIs is https; one that says `"web"` cannot register
+  loopback http.
 - **Refresh grace.** `lifetimes.refreshReuseGrace` lets a refresh token that was just rotated be presented
-  once more (a client whose response got lost). Clients must still serialize refreshes per token: two
-  processes refreshing the same token at once can trip reuse detection.
+  once more (a client whose response got lost). It does not absorb concurrent refreshes: clients must
+  serialize refreshes per token, because two processes refreshing the same token at once trip reuse detection
+  and revoke the family. This is a known issue of the core's 1.0.0 betas (see its
+  [security](https://github.com/CakeDC/oauth-server/blob/1.x/docs/security.md#known-issue-concurrent-refreshes)
+  page).
 - **Family cap.** `lifetimes.family` is a hard cap for a whole chain of refresh tokens. It is stored per
   token (`family_started_at`), so it survives pruning.
 - **Personal tokens off.** Setting `personalTokens` to `false` stops every existing personal token at once.
   They stay listed and can still be revoked.
 - **Scopes at use time.** Effective scopes are computed when a token is used, not only when it is issued.
-  Empty effective scopes mean no access. A refresh and a code exchange intersect the scopes with what the
-  person may hold today (`scopes` callback), so a demotion narrows the grant.
+  Empty effective scopes mean no access. A code exchange intersects the scopes with what the person may hold
+  today (`scopes` callback). A refresh narrows only the new access token (by a requested `scope`, the client's
+  scopes and the `scopes` callback); the new refresh token keeps the grant, minus scopes the resource no longer
+  declares, so a person demoted and promoted again gets the scopes back at the next refresh.
 - **`canAuthorize()` runs once.** It is asked at `/authorize`, not again afterwards. After a policy change,
   revoke the affected tokens (see [users](users.md#cutting-a-person-off)).
 - **Introspection is a privilege.** A client with `allowIntrospection` can learn about any token of its
@@ -120,10 +133,15 @@ Besides the core's per endpoint limits, the plugin reads `rateLimit.cache`:
 | `cache` | string or null | `default` | Name of the Cake cache configuration that holds the counters. `null` turns the limits off |
 
 That one cache does more than rate limiting: it also keeps the per client address budget of metadata
-document fetches (`rateLimit.cimd`) and the 60 second memory of failed fetches. With `'cache' => null`
-all three are off. `oauth check` warns about it. Use a cache shared by all your PHP processes (Redis,
-Memcached, or file for a single server); an `Array` cache lives in one process and limits nothing in
+document fetches (`rateLimit.cimd`) and the 60 second memory of rejected fetches (a temporary failure, such as a
+timeout or a 5xx, is not remembered, unless a stored copy of the client is being served meanwhile). With
+`'cache' => null` all three are off. `oauth check` warns about it. Use a cache shared by all your PHP processes
+(Redis, Memcached, or file for a single server); an `Array` cache lives in one process and limits nothing in
 production.
+
+When the cache fails (Redis is down), rate limiting fails open: requests go through without limits and each one
+logs a warning on the `oauth` scope (`Rate limiting is off for this request: the cache failed (...)`), instead of
+every endpoint answering 500. Watch for that line.
 
 ```php
 'rateLimit' => ['cache' => 'oauth', 'token' => [120, 60]],
@@ -236,9 +254,9 @@ return [
         ],
         'lifetimes' => ['access' => 1800, 'personalMax' => 2592000],
         'refreshTokens' => 'offline_access',
-        'registration' => ['mode' => 'open', 'allowPrivateSchemes' => true],
+        'registration' => ['mode' => 'open'],
         'cimd' => ['enabled' => true, 'allowedHosts' => null],
-        'rateLimit' => ['cache' => 'oauth', 'token' => [120, 60]],
+        'rateLimit' => ['cache' => 'oauth', 'token' => [120, 60], 'introspect' => [1200, 60]],
         'retentionDays' => 14,
         'userProvider' => [
             'table' => 'Users',

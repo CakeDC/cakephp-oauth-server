@@ -34,10 +34,28 @@ and never relaxes what it enforces. This page lists what the plugin adds and wha
 - **Subjects are matched exactly.** `OrmUserProvider` compares the key as a string and refuses a different
   spelling of the same number; the tables use `utf8mb4_bin` on MySQL and MariaDB.
 - **Inactive people stop at once.** The person is loaded again with your finder on every use.
-- **Consent names a metadata document client by its `client_id` host**, and flags dynamically registered
-  clients as unverified. The shipped templates do this; keep it in overrides.
+- **The pages never headline a client by a name it chose.** The consent page names a metadata document client
+  by its `client_id` host and a dynamically registered client by the host its answer goes to ("An application on
+  this computer" for a private-use scheme); the declared name appears only inside a `<q>` element on an
+  unverified line, so it cannot pose as the server's text. The connections page labels a dynamically registered
+  client by the hosts of its redirect URIs. The shipped templates do this; keep it in overrides
+  ([pages](pages.md#variables)).
+- **No redirect before the login, and none to a client nobody vouched for.** The core sends an error back to the
+  client only after the person signed in, and only when an administrator registered the client or this person
+  approved it before. Otherwise the error page names the destination and offers a plain link
+  (`CakeErrorPageRenderer` implements the core's `RedirectNoticeRendererInterface`;
+  [pages](pages.md#the-error-page-and-untrusted-clients)).
+- **A remembered consent does not answer for a client whose identity cannot be confirmed.** A public client
+  with a loopback or private-scheme redirect (any program on the computer can receive the answer) sees the
+  consent page on every connection, with a line saying the person approved it before.
 - **Never logging tokens.** The plugin's own code does not write token values, client secrets or codes to
-  any log or event.
+  any log or event. Its parameters that carry them (the configuration with `secret` and
+  `registration.initialAccessToken`, the test trait's bearer token) are `#[\SensitiveParameter]`, like the
+  core's, so a stack trace in a log shows `Object(SensitiveParameterValue)` instead. Frames of other libraries
+  are outside this (the core's
+  [secrets in logs and traces](https://github.com/CakeDC/oauth-server/blob/1.x/docs/security.md#secrets-in-logs-and-traces)
+  names them), and so is your own code: keep `zend.exception_ignore_args = On` in production (the default of
+  PHP's production `php.ini`), which drops every argument from traces.
 - **A derived secret needs a real salt.** Without `OAuthServer.secret`, the secret is derived from
   `Security.salt`, which must be at least 32 characters.
 

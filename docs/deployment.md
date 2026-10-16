@@ -161,8 +161,10 @@ browsers reject the response.
   unless you change it); `oauth check` inspects that connection.
 - **Transactions.** Never run the OAuth endpoints inside a request-wide database transaction (a middleware
   that wraps every request in `BEGIN ... COMMIT`). A rollback after an error could undo tokens already
-  handed out, and checks after an atomic update could read a stale snapshot. Exclude the OAuth routes from
-  such a wrapper.
+  handed out, and checks after an atomic update could read a stale snapshot. Also, two first approvals of the
+  same client at once (a double click on Allow) are absorbed by falling back from the insert to an update on the
+  unique key, which PostgreSQL cannot do inside a transaction the failed insert aborted. Exclude the OAuth routes
+  from such a wrapper.
 
 ## Cron
 

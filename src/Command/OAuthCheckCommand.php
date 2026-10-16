@@ -86,6 +86,19 @@ class OAuthCheckCommand extends Command
     ];
 
     /**
+     * Other indexes the queries rely on, with the migration that adds each: without one a query scans the table.
+     */
+    private const INDEXES = [
+        'oauth_authorization_codes' => [
+            [
+                ['subject'],
+                '20261017120000_AddOAuthCodesSubjectIndex',
+                'which revoking a person or a connection uses to delete their pending codes',
+            ],
+        ],
+    ];
+
+    /**
      * The ORM tables of the four database tables.
      */
     private const TABLE_CLASSES = [
@@ -319,6 +332,7 @@ class OAuthCheckCommand extends Command
         $missing = [];
         $columns = [];
         $unique = [];
+        $indexes = [];
         foreach (self::TABLE_CLASSES as $name => $class) {
             $collection = $this->fetchTable($class)->getConnection()->getSchemaCollection();
             if (!in_array($name, $collection->listTables(), true)) {
@@ -331,8 +345,10 @@ class OAuthCheckCommand extends Command
             }
             // A unique index is reflected as a unique constraint or a unique index, depending on the database.
             $keys = [];
+            $covered = [];
             foreach (array_merge($schema->constraints(), $schema->indexes()) as $key) {
                 $definition = $schema->getConstraint($key) ?? $schema->getIndex($key);
+                $covered[] = (array)($definition['columns'] ?? []);
                 if (($definition['type'] ?? null) === 'unique') {
                     $keys[] = (array)$definition['columns'];
                 }
@@ -340,6 +356,18 @@ class OAuthCheckCommand extends Command
             foreach (self::UNIQUE[$name] as $key) {
                 if (!in_array($key, $keys, true)) {
                     $unique[] = $name . ' (' . implode(', ', $key) . ')';
+                }
+            }
+            foreach (self::INDEXES[$name] ?? [] as [$indexColumns, $migration, $why]) {
+                if (!in_array($indexColumns, $covered, true)) {
+                    $indexes[] = sprintf(
+                        'no index on %s (%s), %s; copy config/Migrations/%s.php into the application and run '
+                        . 'bin/cake migrations migrate',
+                        $name,
+                        implode(', ', $indexColumns),
+                        $why,
+                        $migration,
+                    );
                 }
             }
         }
@@ -378,6 +406,10 @@ class OAuthCheckCommand extends Command
                     . implode(', ', $names),
                 ];
             }
+        }
+
+        if ($indexes !== []) {
+            return ['warn', implode('; ', $indexes) . $where];
         }
 
         return ['pass', 'all four tables exist'];

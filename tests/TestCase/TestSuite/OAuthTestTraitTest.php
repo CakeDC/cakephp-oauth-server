@@ -117,7 +117,7 @@ class OAuthTestTraitTest extends TestCase
     public function testRejectsScopesTheResourceDoesNotHave(): void
     {
         $this->expectException(InvalidArgumentException::class);
-        $this->expectExceptionMessage('You cannot grant "admin"');
+        $this->expectExceptionMessage("You cannot grant 'admin'");
 
         $this->oauthTokenFor(1, ['admin'], 'http://localhost/api');
     }

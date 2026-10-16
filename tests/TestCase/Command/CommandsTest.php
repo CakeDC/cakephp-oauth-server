@@ -15,8 +15,11 @@ use Cake\Log\Log;
 use Cake\Routing\Router;
 use Cake\TestSuite\TestCase;
 use Cake\Utility\Security;
+use CakeDC\OAuth\Server\Grant\AuthorizationCode;
 use CakeDC\OAuth\Server\Grant\Consent;
 use CakeDC\OAuth\Server\Support\Time;
+use CakeDC\OAuth\Server\Support\Uuid;
+use CakeDC\OAuth\Server\Token\TokenGenerator;
 use CakeDC\OAuthServer\Command\OAuthCheckCommand;
 use CakeDC\OAuthServer\OAuthServer;
 use CakeDC\OAuthServer\Test\Support\Fixtures;
@@ -81,6 +84,64 @@ class CommandsTest extends TestCase
 
         $this->assertExitError();
         $this->assertErrorContains('http');
+    }
+
+    public function testAddRefusesNamesWithInvisibleOrControlCharacters(): void
+    {
+        $before = OAuthServer::server()->storage()->findClients();
+        foreach (["Claude\u{202E}gnp", "\u{200B}\u{200B}", "Cla\u{E0041}ude"] as $name) {
+            $this->exec('oauth client add "' . $name . '" --confidential --grant client_credentials');
+
+            $this->assertExitError(bin2hex($name));
+            $this->assertErrorContains('visible characters');
+        }
+        $this->assertEquals($before, OAuthServer::server()->storage()->findClients());
+
+        // Names in other scripts are honest names.
+        $this->exec(
+            'oauth client add "\u{0645}\u{06CC}\u{200C}\u{062E}\u{0648}\u{0627}\u{0647}\u{0645}" '
+            . '--confidential --grant client_credentials',
+        );
+        $this->assertExitSuccess();
+    }
+
+    public function testRevokingAPersonOrAClientDeletesTheirPendingCodes(): void
+    {
+        $server = OAuthServer::server();
+        $client = $server->clientRegistrar()->create('App', ['https://app.example.com/cb'], false)['client'];
+        $other = $server->clientRegistrar()->create('Other', ['https://other.example.com/cb'], false)['client'];
+        $now = $server->clock()->now();
+        $code = function (string $subject, string $clientId) use ($server, $now): AuthorizationCode {
+            $code = new AuthorizationCode(
+                id: Uuid::v4(),
+                codeHash: TokenGenerator::hash(Uuid::v4()),
+                clientInternalId: $clientId,
+                subject: $subject,
+                redirectUri: 'https://app.example.com/cb',
+                resource: 'http://localhost/mcp',
+                scopes: ['content:read'],
+                codeChallenge: 'challenge',
+                expiresAt: Time::plus($now, 60),
+                createdAt: $now,
+            );
+            $server->storage()->saveCode($code);
+
+            return $code;
+        };
+        $mine = $code('1', $client->id);
+        $someoneElses = $code('2', $other->id);
+        $ofTheClient = $code('2', $client->id);
+
+        $this->exec('oauth token revoke --subject 1');
+        $this->assertExitSuccess();
+        $this->assertNull($server->storage()->findCodeByHash($mine->codeHash));
+        $this->assertNotNull($server->storage()->findCodeByHash($someoneElses->codeHash));
+        $this->assertNotNull($server->storage()->findCodeByHash($ofTheClient->codeHash));
+
+        $this->exec('oauth token revoke --client ' . $client->clientId);
+        $this->assertExitSuccess();
+        $this->assertNull($server->storage()->findCodeByHash($ofTheClient->codeHash));
+        $this->assertNotNull($server->storage()->findCodeByHash($someoneElses->codeHash));
     }
 
     public function testAddsPublicClientsWithRedirects(): void
@@ -397,6 +458,27 @@ class CommandsTest extends TestCase
         $this->assertExitError();
         $this->assertOutputContains('[FAIL] Tables');
         $this->assertOutputContains('oauth_tokens (token_hash)');
+    }
+
+    public function testCheckWarnsWhenTheSubjectIndexOfTheCodesIsMissing(): void
+    {
+        $connection = ConnectionManager::get('default');
+        $driver = $connection->getDriver();
+        $connection->execute($driver instanceof Mysql
+            ? 'DROP INDEX oauth_authorization_codes_subject ON oauth_authorization_codes'
+            : 'DROP INDEX oauth_authorization_codes_subject');
+        try {
+            $this->exec('oauth check');
+        } finally {
+            $connection->execute(
+                'CREATE INDEX oauth_authorization_codes_subject ON oauth_authorization_codes (subject)',
+            );
+        }
+
+        $this->assertOutputContains('[WARN] Tables');
+        $this->assertOutputContains('oauth_authorization_codes (subject)');
+        $this->assertOutputContains('20261017120000_AddOAuthCodesSubjectIndex');
+        $this->assertOutputNotContains('[FAIL] Tables');
     }
 
     public function testCheckWarnsWithoutCsrfMiddleware(): void

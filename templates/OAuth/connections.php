@@ -4,7 +4,9 @@
  * @var \CakeDC\OAuth\Server\View\ConnectionsView $connections
  */
 
+use CakeDC\OAuth\Server\Client\Client;
 use CakeDC\OAuth\Server\Client\ClientType;
+use CakeDC\OAuthServer\View\QuotedName;
 
 $this->assign('title', h(__d('oauth_server', 'Connected applications')));
 $date = fn(?DateTimeInterface $value): string => $value === null
@@ -22,6 +24,33 @@ $button = function (string $action, array $fields, string $label) use ($connecti
     }
 
     return $html . $this->Form->button($label, ['class' => 'oauth-secondary']) . $this->Form->end();
+};
+// The client cell. A metadata document client is named by its client_id host (its name is self-asserted). A
+// self-registered client chose its name and its redirect URIs: the hosts of those lead (a fixed text for a private-use
+// scheme), its name follows as a quote, and it is marked unverified.
+$cell = function (Client $client): string {
+    $host = $client->displayHost();
+    if ($client->type === ClientType::MetadataDocument && $host !== '') {
+        return h($host);
+    }
+    if ($client->type !== ClientType::Dynamic) {
+        return h($client->name) . '<br><span class="oauth-muted">' . h($host) . '</span>';
+    }
+    $hosts = implode(', ', $client->webHosts());
+    $html = h(match (true) {
+        $hosts === '' => __d('oauth_server', 'An application on this computer'),
+        $client->hasNonWebRedirect() => __d('oauth_server', '{0} and an application on this computer', $hosts),
+        default => $hosts,
+    });
+    if ($client->name !== $hosts) {
+        $html .= '<br><span class="oauth-muted">' . QuotedName::html(
+            __d('oauth_server', 'It calls itself {0}. Anyone can choose that name.', QuotedName::PLACEHOLDER),
+            $client->name,
+        ) . '</span>';
+    }
+
+    return $html . '<br><span class="oauth-warning">'
+        . h(__d('oauth_server', 'Unverified: this application registered itself.')) . '</span>';
 };
 ?>
 <h1><?= h(__d('oauth_server', 'Connected applications')) ?></h1>
@@ -42,8 +71,6 @@ $button = function (string $action, array $fields, string $label) use ($connecti
         </tr>
         <?php foreach ($connections->connections as $connection) : ?>
             <?php
-            $client = $connection->client;
-            $host = $client->displayHost();
             $revoke = $button(
                 'revoke_connection',
                 ['family_id' => $connection->familyId],
@@ -51,19 +78,7 @@ $button = function (string $action, array $fields, string $label) use ($connecti
             );
             ?>
             <tr>
-                <td>
-                    <?php if ($client->type === ClientType::MetadataDocument && $host !== '') : ?>
-                        <?= h($host) ?>
-                    <?php else : ?>
-                        <?= h($client->name) ?><br><span class="oauth-muted"><?= h($host) ?></span>
-                        <?php if ($client->type === ClientType::Dynamic) : ?>
-                            <br><span class="oauth-warning"><?= h(__d(
-                                'oauth_server',
-                                'Unverified: this application registered itself.',
-                            )) ?></span>
-                        <?php endif; ?>
-                    <?php endif; ?>
-                </td>
+                <td><?= $cell($connection->client) ?></td>
                 <td><?= h($connections->resourceName($connection->resource)) ?></td>
                 <td><?= h(implode(', ', $connection->scopes)) ?></td>
                 <td><?= h($date($connection->connectedAt)) ?></td>

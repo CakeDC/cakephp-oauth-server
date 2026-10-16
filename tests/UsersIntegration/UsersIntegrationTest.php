@@ -155,6 +155,38 @@ class UsersIntegrationTest extends TestCase
         $this->assertResponseContains((string)$user->get('id'));
     }
 
+    public function testAnErrorForASelfRegisteredClientWaitsForTheLoginAndNeverRedirects(): void
+    {
+        $user = $this->createUser();
+        $this->configRequest(['headers' => ['Content-Type' => 'application/json']]);
+        $this->post($this->prefix . '/register', (string)json_encode([
+            'client_name' => 'claude.ai',
+            'redirect_uris' => ['https://evil.example/login'],
+            'token_endpoint_auth_method' => 'none',
+        ]));
+        $this->assertResponseCode(201);
+        $clientId = (string)json_decode((string)$this->_response->getBody(), true)['client_id'];
+        $this->_request = [];
+        $query = http_build_query([
+            'response_type' => 'x',
+            'client_id' => $clientId,
+            'redirect_uri' => 'https://evil.example/login',
+            'state' => 's',
+        ]);
+
+        // Anonymous: cakedc/users' login, with the request to come back to.
+        $this->get($this->prefix . '/authorize?' . $query);
+        $this->assertRedirectContains('/login?redirect=');
+        $this->assertStringNotContainsString('evil.example/login?', $this->_response->getHeaderLine('Location'));
+
+        // Signed in: a page that names the destination, and no redirect.
+        $this->session(['Auth' => $user]);
+        $this->get($this->prefix . '/authorize?' . $query);
+        $this->assertResponseCode(400);
+        $this->assertSame('', $this->_response->getHeaderLine('Location'));
+        $this->assertResponseContains('Continue to evil.example</a>');
+    }
+
     public function testABearerTokenIsNeverABrowserLogin(): void
     {
         $user = $this->createUser();

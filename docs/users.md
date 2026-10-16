@@ -84,8 +84,10 @@ Limits the scopes this person may hold. It receives the identity and the resourc
 },
 ```
 
-The result is applied when tokens are used, on every refresh and code exchange, so a demotion narrows
-what existing grants can do. An empty list means no access at all.
+The result is applied when tokens are used and on every code exchange and refresh, so a demotion narrows
+what existing grants can do at once. A refresh narrows only the new access token: the refresh token keeps the
+grant, so a person promoted again gets the scopes back at the next refresh. An empty list means no access at
+all.
 
 ### forClient
 
@@ -204,6 +206,10 @@ Your login must send the person back to that address once they sign in and must 
 addresses of your own site. With `cakephp/authentication`'s form login this is
 `$this->Authentication->getLoginRedirect()`.
 
+A visitor is never sent back to a client before signing in, even when the request is wrong in a way the client
+should hear about: a `GET` gets the login with the same return address and is checked again afterwards, a `POST`
+gets the plain error page.
+
 ## Cutting a person off
 
 `SessionUserContext` and the user provider decide who is active, so deactivating an account needs no
@@ -215,7 +221,9 @@ bin/cake oauth token revoke --subject 42 --consents
 ```
 
 `--consents` also deletes the person's remembered consents, so a client they approved before cannot skip
-the consent page. From code, it is `revokeAllForSubject()` and `deleteConsentsBySubject()`:
+the consent page. The authorization codes the person has not exchanged yet are deleted too, so a code issued a
+moment before cannot open a new connection. From code, it is `revokeAllForSubject()` (tokens and pending codes)
+and `deleteConsentsBySubject()`:
 
 ```php
 use CakeDC\OAuthServer\OAuthServer;

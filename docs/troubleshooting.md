@@ -47,6 +47,28 @@ override that writes `<form>` by hand. Build the form with `$this->Form->create(
   login.
 - The account is inactive for the configured `finder`. The person is treated as signed out.
 
+## An error page with a "Continue to" link instead of going back to the application
+
+The authorization request had an error the client should hear about (an unsupported `response_type`, a missing
+PKCE challenge, ...), and the client registered itself or uses a metadata document, and the signed-in person never
+approved it. The core does not send people to a redirect URI that nobody vouched for: the page names the host
+and the person may follow the link. A client you register with `oauth client add`, or one the person approved
+before, gets the error back automatically. A template override of `error.php` that does not print `$notice`
+shows no link ([pages](pages.md#the-error-page-and-untrusted-clients)).
+
+## The consent page appears every time for a command line tool
+
+A public client whose redirect URI is on this computer (loopback `http://127.0.0.1:...`, `localhost`, or a
+private-use scheme) cannot prove who it is: any program on the computer could receive the answer. The person is
+asked on every connection, with a line saying they approved it before. This is intended; https clients and
+confidential clients are remembered as before.
+
+## A client with a `com.example.app:/...` redirect URI cannot register
+
+`registration.allowPrivateSchemes` is `false` by default. Set it to `true` to accept private-use schemes at
+dynamic registration and in metadata documents ([configuration](configuration.md#core-keys)), or add the client
+with `oauth client add`.
+
 ## 404 on /.well-known/oauth-authorization-server
 
 - Subdirectory install: the metadata document must be served at the host root and the web server has to
@@ -132,7 +154,14 @@ Behind a proxy every request comes from the proxy address. Configure trusted pro
 
 ## No rate limiting, or no CIMD protection
 
-`rateLimit.cache` is `null` (or the named cache does not exist). `oauth check` warns or fails.
+`rateLimit.cache` is `null` (or the named cache does not exist). `oauth check` warns or fails. When the cache is
+configured but failing (Redis down), the limits fail open and every request logs
+`Rate limiting is off for this request: the cache failed (...)` on the `oauth` scope.
+
+## A resource server that introspects on every request hits 429
+
+Introspection counts against `rateLimit.introspect` (default `[600, 60]`), not `rateLimit.token`. Raise it for
+busy resource servers.
 
 ## What each oauth check line means
 

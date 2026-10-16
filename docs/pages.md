@@ -31,18 +31,65 @@ command line, `CakeTemplateRenderer` leaves a `Router` request set.
 | `consent.php` | `$consent` | `CakeDC\OAuth\Server\View\ConsentView` |
 | `connections.php` | `$connections` | `CakeDC\OAuth\Server\View\ConnectionsView` |
 | `error.php` | `$error` | `CakeDC\OAuth\Server\Exception\OAuthException` |
+| `error.php` | `$notice` | `CakeDC\OAuth\Server\View\RedirectNoticeView` or `null` |
 
 Useful members of `ConsentView`: `client`, `owner` (with `displayName`), `resource` (with `name`), `scopes`
 (scope name to description, granted scopes only), `offlineAccess`, `redirectUri`, `formAction`, `fields`,
-and the methods `clientHost()`, `redirectHost()`, `isUnverified()` and `isLoopbackOnly()`.
+`approvedBefore`, and the methods `clientLabel()`, `declaredName()`, `clientHost()`, `redirectHost()`,
+`isUnverified()` and `isLoopbackOnly()`.
 
 Useful members of `ConnectionsView`: `owner`, `connections` (each with `familyId`, `client`, `resource`,
 `scopes`, `connectedAt`, `lastUsedAt`), `personalTokens`, `creatable`, `personalTokensEnabled`,
-`newToken`, `error`, `formAction`, `formToken`, `maxDays` and `resourceName($identifier)`.
+`newToken`, `error`, `formAction`, `formToken`, `maxDays` and `resourceName($identifier)`. A connection's
+`scopes` are its grant (those of its newest refresh token that was not rotated yet), so a refresh that asked
+for less does not make the page show less.
 
-Use the values as the core computed them. In particular name a client created from a metadata document by
-`clientHost()` (the host of its `client_id`), never by `client->name`, which the client chose itself, and
-print the "unverified" and loopback notices. Print `offlineAccess` as is. The shipped templates show how.
+Use the values as the core computed them. The shipped templates show how; when you write your own, keep these
+rules:
+
+- **Name the client with `clientLabel()`.** It is the name of a client an administrator registered, the host of
+  the `client_id` of a metadata document client, and the host the answer goes to for a self-registered (dynamic)
+  client. It is empty for a self-registered client whose answer goes to a private-use scheme (anyone can claim
+  any scheme, `claude.ai:` included): show a fixed text then, as the plugin does with "An application on this
+  computer". Never headline a self-registered client by `client->name` or by `clientHost()` of a redirect URI it
+  merely listed: both are its own choice.
+- **The "from" line** uses `clientHost()`, or `redirectHost()` when it is empty, except for a self-registered
+  client with a private-use redirect, which gets the same fixed text as its heading: the scheme says only where
+  the answer goes.
+- **Show `declaredName()` only as a quote.** When it is not `null` (a self-registered client whose name differs
+  from its label), print it as an unverified secondary line with the name inside a `<q>` element, never between
+  quote characters, so a name such as `Claude". Verified publisher. "` cannot close the quote and go on as if the
+  server were speaking. `CakeDC\OAuthServer\View\QuotedName::html($template, $name)` does it: it escapes both
+  and puts the name in `<q>` at the `{0}` placeholder (or after the text when a translation dropped it):
+
+  ```php
+  <?= QuotedName::html(
+      __d('oauth_server', 'It calls itself {0}. Anyone can choose that name.', QuotedName::PLACEHOLDER),
+      $consent->declaredName(),
+  ) ?>
+  ```
+
+- **Print the notices**: `isUnverified()` (the client registered itself), `isLoopbackOnly()` (any program on
+  this computer can receive the answer) and `approvedBefore` (a remembered consent covers the request, but the
+  client's identity cannot be confirmed: a public client with a loopback or private-scheme redirect is asked
+  every time). Print `offlineAccess` as is.
+- **On the connections page**, name a self-registered client by the hosts of its redirect URIs
+  (`client->webHosts()`), with the fixed text when it has none and "and an application on this computer" when it
+  also has a private-use redirect (`client->hasNonWebRedirect()`); its name, again, only as a `<q>` quote.
+
+### The error page and untrusted clients
+
+When a request fails in a way the client should hear about, the core sends the person back to the client only
+when it trusts the redirect URI: a client an administrator registered, or one this person approved before. For a
+self-registered or metadata document client nobody vouched for, it shows the error page instead, and `error.php`
+gets `$notice` (a `RedirectNoticeView`; `null` on every other error page). Print what the shipped template prints:
+the destination (`$notice->redirectHost()`, the scheme for a private-use URI) and a plain link to
+`$notice->continueUrl` with `rel="noreferrer"`. Never follow it for the person: no script, no meta refresh, no
+`Location`. A template of yours that ignores `$notice` shows the plain error page, and the person is not sent back
+to the client at all.
+
+Nothing is redirected before the person is signed in: a visitor gets the login first (`GET`) or the plain error
+page (`POST`), and the request is checked again after the login.
 
 ### Forms and CSRF
 
@@ -109,7 +156,11 @@ already set.
 ## Translations
 
 Interface strings are English in the templates and go through `__d('oauth_server', ...)`. The plugin ships
-`resources/locales/oauth_server.pot` and a Spanish translation, `resources/locales/es/oauth_server.po`.
+`resources/locales/oauth_server.pot` and a Spanish translation, `resources/locales/es/oauth_server.po`. A
+test checks that every message the templates use is in both files.
+
+Keep the `{0}` placeholder in a translation of "It calls itself {0}. Anyone can choose that name.": the name goes
+there inside its `<q>` element (a translation without it gets the name appended).
 
 To translate to another language, or to change a text, copy the file into your application, for example
 `resources/locales/fr/oauth_server.po`, and translate the `msgstr` values. Your files are loaded on top of

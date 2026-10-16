@@ -23,6 +23,7 @@ $language = substr((string)I18n::getLocale(), 0, 2);
         cursor:pointer}
         button.oauth-secondary{background:#e5e7eb;color:#1d2330}table{width:100%;border-collapse:collapse}
         td,th{text-align:left;padding:.4rem;border-bottom:1px solid #eee}code{word-break:break-all}
+        q{background:#eef2f7;padding:0 .25rem;border-radius:4px}
         label{display:block;margin:.4rem 0}input[type=text],input[type=number],select{padding:.4rem}
     </style>
 </head>

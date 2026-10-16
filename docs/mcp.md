@@ -49,6 +49,9 @@ page, so write it as a sentence about their data ("Read your posts"). Check scop
 composer require mcp/sdk nyholm/psr7
 ```
 
+The bridge needs mcp/sdk 0.9 or newer (until 0.9 is released, its `dev-main`); with an older SDK
+`mcpTokenValidator()` throws a `LogicException` that names the minimum, instead of failing on every valid token.
+
 ```php
 use CakeDC\OAuthServer\OAuthServer;
 use Mcp\Server\Transport\Http\Middleware\AuthorizationMiddleware;
@@ -65,7 +68,7 @@ boot it would take every page down, which the plugin otherwise prevents
 ([an invalid configuration](configuration.md#an-invalid-configuration)).
 
 `mcpTokenValidator()` throws `InvalidArgumentException` when the resource is not declared and
-`LogicException` when `mcp/sdk` is missing. `$metadata` (`ProtectedResourceMetadata`), `$policy`
+`LogicException` when `mcp/sdk` is missing or older than 0.9. `$metadata` (`ProtectedResourceMetadata`), `$policy`
 (`ScopePolicy`) and the other middleware of the transport are built as in the core's example. The SDK is
 under development, so check its documentation for the exact transport calls.
 
