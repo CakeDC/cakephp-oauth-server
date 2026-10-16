@@ -9,11 +9,15 @@ use CakeDC\OAuth\Server\Client\ApplicationType;
 use CakeDC\OAuth\Server\Client\Client;
 use CakeDC\OAuth\Server\Client\ClientAuthMethod;
 use CakeDC\OAuth\Server\Client\ClientType;
+use CakeDC\OAuth\Server\Owner\ResourceOwner;
 use CakeDC\OAuth\Server\Owner\SubjectType;
 use CakeDC\OAuth\Server\Resource\ProtectedResource;
 use CakeDC\OAuthServer\Config\PluginConfig;
 use CakeDC\OAuthServer\Identity\OrmUserProvider;
 use DateTimeImmutable;
+use InvalidArgumentException;
+use PHPUnit\Framework\Attributes\DataProvider;
+use UnexpectedValueException;
 
 class OrmUserProviderTest extends TestCase
 {
@@ -95,5 +99,69 @@ class OrmUserProviderTest extends TestCase
         $this->assertNull($this->provider()->findBySubject('01'));
         $this->assertNull($this->provider()->findBySubject('1.0'));
         $this->assertSame('1', $this->provider()->findBySubject('1')?->subject);
+    }
+
+    public function testForClientPassesAResourceOwnerThrough(): void
+    {
+        $owner = new ResourceOwner('svc', 'Service', ['id' => 1], SubjectType::Client);
+        $provider = $this->provider(['forClient' => fn() => $owner]);
+
+        $this->assertSame($owner, $provider->forClient($this->client(), $this->resource()));
+        $this->assertNull($this->provider(['forClient' => fn() => false])->forClient($this->client(), $this->resource()));
+    }
+
+    public function testForClientRejectsOtherTypes(): void
+    {
+        $this->expectException(UnexpectedValueException::class);
+        $this->expectExceptionMessage('OAuthServer.userProvider.forClient');
+
+        $this->provider(['forClient' => fn() => 'yes'])->forClient($this->client(), $this->resource());
+    }
+
+    public static function wrongCanAuthorize(): array
+    {
+        return [[1], ['true'], [null], [[]]];
+    }
+
+    #[DataProvider('wrongCanAuthorize')]
+    public function testCanAuthorizeFailsClosedOnNonBool(mixed $value): void
+    {
+        $provider = $this->provider(['canAuthorize' => fn() => $value]);
+        $owner = $provider->findBySubject('1');
+        $this->assertNotNull($owner);
+        $this->expectException(UnexpectedValueException::class);
+        $this->expectExceptionMessage('OAuthServer.userProvider.canAuthorize');
+
+        $provider->canAuthorize($owner, $this->client(), $this->resource());
+    }
+
+    public static function wrongScopes(): array
+    {
+        return [['content:read'], [true], [['a' => 'b']], [[1, 2]], [['a', null]]];
+    }
+
+    #[DataProvider('wrongScopes')]
+    public function testScopesFailClosedOnWrongTypes(mixed $value): void
+    {
+        $provider = $this->provider(['scopes' => fn() => $value]);
+        $owner = $provider->findBySubject('1');
+        $this->assertNotNull($owner);
+        $this->expectException(UnexpectedValueException::class);
+        $this->expectExceptionMessage('OAuthServer.userProvider.scopes');
+
+        $provider->scopesFor($owner, $this->resource());
+    }
+
+    public function testABrokenFinderThrowsInsteadOfLookingLikeNoPerson(): void
+    {
+        $provider = $this->provider();
+        $this->getTableLocator()->get('Users')->getEventManager()
+            ->on('Model.beforeFind', function ($event, $query): void {
+                $query->contain(['Nope']);
+            });
+
+        $this->expectException(InvalidArgumentException::class);
+
+        $provider->findBySubject('1');
     }
 }

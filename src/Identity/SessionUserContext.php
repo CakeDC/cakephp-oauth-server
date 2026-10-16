@@ -5,6 +5,7 @@ namespace CakeDC\OAuthServer\Identity;
 
 use ArrayAccess;
 use Authentication\AuthenticationServiceInterface;
+use Authentication\Authenticator\ImpersonationInterface;
 use Authentication\Authenticator\StatelessInterface;
 use Authentication\IdentityInterface;
 use Cake\Http\Response;
@@ -46,13 +47,17 @@ final class SessionUserContext implements UserContextInterface
         if ($this->isNotBrowserLogin($request)) {
             return null;
         }
-        $identity = $request->getAttribute($this->identityAttribute);
+        $service = $request->getAttribute('authentication');
+        $attribute = $service instanceof AuthenticationServiceInterface
+            ? $service->getIdentityAttribute()
+            : $this->identityAttribute;
+        $identity = $request->getAttribute($attribute);
         $subject = match (true) {
             $identity instanceof IdentityInterface => $identity->getIdentifier(),
             $identity instanceof ArrayAccess, is_array($identity) => $identity['id'] ?? null,
             default => null,
         };
-        if (!is_scalar($subject) || (string)$subject === '') {
+        if (!is_int($subject) && !is_string($subject) || (string)$subject === '') {
             return null;
         }
         $owner = $this->users->findBySubject((string)$subject);
@@ -69,14 +74,17 @@ final class SessionUserContext implements UserContextInterface
     private function isNotBrowserLogin(ServerRequestInterface $request): bool
     {
         $service = $request->getAttribute('authentication');
-        if (
-            $service instanceof AuthenticationServiceInterface
-            && $service->getAuthenticationProvider() instanceof StatelessInterface
-        ) {
-            return true;
+        if ($service instanceof AuthenticationServiceInterface) {
+            $provider = $service->getAuthenticationProvider();
+            if ($provider instanceof StatelessInterface) {
+                return true;
+            }
+            if ($provider instanceof ImpersonationInterface && $provider->isImpersonating($request)) {
+                return true;
+            }
         }
 
-        // Task 7 adds here: the plugin's own OAuthIdentity (a bearer token's identity) is never a login.
+        // Seam: identities that come from a bearer token are refused here.
         return false;
     }
 
@@ -85,7 +93,12 @@ final class SessionUserContext implements UserContextInterface
      */
     public function loginResponse(ServerRequestInterface $request, string $returnTo): ResponseInterface
     {
-        $url = Router::url($this->loginUrl);
+        $login = $this->loginUrl;
+        if (is_array($login) && !isset($login['_name'])) {
+            // Router::url() would fill plugin and prefix from the current (plugin) request.
+            $login += ['plugin' => false, 'prefix' => false];
+        }
+        $url = Router::url($login);
         $query = http_build_query([$this->redirectParam => $returnTo], '', '&', PHP_QUERY_RFC3986);
 
         return (new Response())

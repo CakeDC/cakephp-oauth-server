@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace CakeDC\OAuthServer\Test\TestCase\Identity;
 
+use ArrayObject;
 use Authentication\AuthenticationService;
 use Authentication\Authenticator\AuthenticatorInterface;
 use Authentication\Authenticator\HttpBasicAuthenticator;
@@ -15,6 +16,7 @@ use Cake\TestSuite\TestCase;
 use CakeDC\OAuthServer\Config\PluginConfig;
 use CakeDC\OAuthServer\Identity\OrmUserProvider;
 use CakeDC\OAuthServer\Identity\SessionUserContext;
+use Psr\Http\Message\ServerRequestInterface;
 
 class SessionUserContextTest extends TestCase
 {
@@ -86,5 +88,52 @@ class SessionUserContextTest extends TestCase
         $owner = $this->context()->currentOwner($this->withProvider(new SessionAuthenticator(new IdentifierCollection())));
 
         $this->assertSame('1', $owner?->subject);
+    }
+
+    public function testAnArrayLoginUrlIgnoresThePluginOfTheCurrentRequest(): void
+    {
+        Router::createRouteBuilder('/')->connect('/users/sign-in', ['controller' => 'Users', 'action' => 'login']);
+        $current = new ServerRequest(['url' => '/oauth/authorize']);
+        $current = $current->withParam('plugin', 'CakeDC/OAuthServer')->withParam('controller', 'Authorize')
+            ->withParam('action', 'index');
+        Router::setRequest($current);
+
+        $response = $this->context(['controller' => 'Users', 'action' => 'login'])->loginResponse($current, '/x');
+
+        $this->assertSame('/users/sign-in?redirect=%2Fx', $response->getHeaderLine('Location'));
+    }
+
+    public function testALoginUrlWithAQueryGetsAnAmpersand(): void
+    {
+        $response = $this->context('/login?lang=es')->loginResponse(new ServerRequest(), '/x');
+
+        $this->assertSame('/login?lang=es&redirect=%2Fx', $response->getHeaderLine('Location'));
+    }
+
+    public function testImpersonationIsNotABrowserLogin(): void
+    {
+        $provider = new class (new IdentifierCollection()) extends SessionAuthenticator {
+            public function isImpersonating(ServerRequestInterface $request): bool
+            {
+                return true;
+            }
+        };
+
+        $this->assertNull($this->context()->currentOwner($this->withProvider($provider)));
+    }
+
+    public function testBooleanAndFloatIdsAreRefused(): void
+    {
+        foreach ([true, 1.0] as $id) {
+            $request = (new ServerRequest())->withAttribute('identity', new ArrayObject(['id' => $id]));
+            $this->assertNull($this->context()->currentOwner($request));
+        }
+    }
+
+    public function testTheLoginResponseDependsOnTheRequestUrl(): void
+    {
+        $response = $this->context('/login')->loginResponse(new ServerRequest(), '/oauth/authorize?a=b');
+
+        $this->assertStringEndsWith('redirect=%2Foauth%2Fauthorize%3Fa%3Db', $response->getHeaderLine('Location'));
     }
 }

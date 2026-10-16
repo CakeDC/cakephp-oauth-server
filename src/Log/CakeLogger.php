@@ -5,6 +5,7 @@ namespace CakeDC\OAuthServer\Log;
 
 use Cake\Log\Log;
 use Psr\Log\AbstractLogger;
+use Psr\Log\InvalidArgumentException;
 use Stringable;
 use Throwable;
 
@@ -18,6 +19,10 @@ final class CakeLogger extends AbstractLogger
      */
     public function log($level, string|Stringable $message, array $context = []): void
     {
+        $levels = ['emergency', 'alert', 'critical', 'error', 'warning', 'notice', 'info', 'debug'];
+        if (!is_string($level) || !in_array($level, $levels, true)) {
+            throw new InvalidArgumentException('Unknown log level.');
+        }
         $replace = [];
         foreach ($context as $key => $value) {
             if (is_scalar($value) || $value instanceof Stringable) {
@@ -29,6 +34,6 @@ final class CakeLogger extends AbstractLogger
         if ($exception instanceof Throwable) {
             $text .= "\n" . $exception::class . ' in ' . $exception->getFile() . ':' . $exception->getLine();
         }
-        Log::write((string)$level, $text, ['scope' => ['oauth']]);
+        Log::write($level, $text, ['scope' => ['oauth']]);
     }
 }
