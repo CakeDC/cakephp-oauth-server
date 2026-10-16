@@ -5,10 +5,13 @@ namespace CakeDC\OAuthServer\Test\UsersIntegration;
 
 use Cake\Console\TestSuite\ConsoleIntegrationTestTrait;
 use Cake\Core\Configure;
+use Cake\Http\ServerRequest;
 use Cake\TestSuite\IntegrationTestTrait;
 use Cake\TestSuite\TestCase;
+use CakeDC\Auth\Rbac\Rbac;
 use CakeDC\OAuth\Server\Grant\Pkce;
 use CakeDC\OAuthServer\Config\PluginConfig;
+use CakeDC\OAuthServer\Integration\RbacPermissionsProvider;
 use CakeDC\OAuthServer\Integration\UsersIntegration;
 use CakeDC\OAuthServer\OAuthServer;
 use CakeDC\OAuthServer\Test\Support\Html;
@@ -156,10 +159,14 @@ class UsersIntegrationTest extends TestCase
         $this->get($this->prefix . '/authorize?' . $this->authorizeQuery($client->clientId));
         $this->assertRedirectContains('/login?redirect=');
         $this->assertResponseNotContains('Signed in as');
+        $this->assertNull($this->_requestSession->read('Auth'));
+        $this->assertSame([], $this->_requestSession->read() ?? []);
 
         $this->withOAuthToken($token);
         $this->get($this->prefix . '/connections');
         $this->assertRedirectContains('/login');
+        $this->assertNull($this->_requestSession->read('Auth'));
+        $this->assertSame([], $this->_requestSession->read() ?? []);
     }
 
     public function testABearerRequestNeverCreatesASession(): void
@@ -184,5 +191,66 @@ class UsersIntegrationTest extends TestCase
         $this->exec('oauth check');
 
         $this->assertOutputContains('[FAIL] RBAC');
+    }
+
+    /**
+     * @param string|null $plugin The plugin of the route.
+     * @param string $controller The controller.
+     * @param string $action The action.
+     * @return \Cake\Http\ServerRequest
+     */
+    private function routed(?string $plugin, string $controller, string $action): ServerRequest
+    {
+        return (new ServerRequest(['url' => '/x']))->withAttribute('params', [
+            'plugin' => $plugin,
+            'controller' => $controller,
+            'action' => $action,
+            'prefix' => null,
+            'pass' => [],
+        ]);
+    }
+
+    public function testTheRbacProviderOnlyOpensTheOAuthController(): void
+    {
+        $rbac = new Rbac(['permissions_provider_class' => RbacPermissionsProvider::class]);
+        // A role the application's own rules do not mention.
+        $user = ['id' => '1', 'role' => 'guest'];
+
+        $this->assertSame(OAuthServer::rbacPermissions()[0], $rbac->getPermissions()[0]);
+        $this->assertTrue($rbac->checkPermissions([], $this->routed('CakeDC/OAuthServer', 'OAuth', 'token')));
+        $this->assertTrue($rbac->checkPermissions($user, $this->routed('CakeDC/OAuthServer', 'OAuth', 'authorize')));
+        $this->assertFalse($rbac->checkPermissions($user, $this->routed(null, 'Articles', 'index')));
+        $this->assertFalse($rbac->checkPermissions([], $this->routed(null, 'Articles', 'index')));
+        $this->assertFalse($rbac->checkPermissions($user, $this->routed('CakeDC/Users', 'Users', 'profile')));
+        $this->assertFalse($rbac->checkPermissions($user, $this->routed(null, 'Pages', 'secret')));
+        $this->assertFalse($rbac->checkPermissions($user, $this->routed('CakeDC/OAuthServer', 'Other', 'index')));
+        // The application's own rules survive behind the OAuth rule.
+        $this->assertTrue($rbac->checkPermissions($user, $this->routed(null, 'Pages', 'me')));
+    }
+
+    public function testTheIntegrationKeepsWhatTheApplicationSet(): void
+    {
+        $provider = Configure::read('Auth.RbacPolicy.adapter.permissions_provider_class');
+        $authenticator = Configure::read('Auth.Authenticators.OAuthServerToken');
+        $this->assertSame(RbacPermissionsProvider::class, $provider);
+
+        try {
+            Configure::write('Auth.RbacPolicy.adapter.permissions_provider_class', 'App\\Mine\\Provider');
+            Configure::write('Auth.Authenticators.OAuthServerToken', ['className' => 'App\\Mine\\Authenticator']);
+
+            UsersIntegration::apply();
+
+            $this->assertSame(
+                'App\\Mine\\Provider',
+                Configure::read('Auth.RbacPolicy.adapter.permissions_provider_class'),
+            );
+            $this->assertSame(
+                ['className' => 'App\\Mine\\Authenticator'],
+                Configure::read('Auth.Authenticators.OAuthServerToken'),
+            );
+        } finally {
+            Configure::write('Auth.RbacPolicy.adapter.permissions_provider_class', $provider);
+            Configure::write('Auth.Authenticators.OAuthServerToken', $authenticator);
+        }
     }
 }
