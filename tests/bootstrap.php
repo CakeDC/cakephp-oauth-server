@@ -60,7 +60,18 @@ Cache::setConfig([
     '_cake_routes_' => ['engine' => 'Array'],
     'default' => ['engine' => 'Array'],
 ]);
-ConnectionManager::setConfig('test', ['url' => getenv('DB_URL') ?: 'sqlite:///:memory:', 'timezone' => 'UTC']);
+// A fresh SQLite file per run, not ":memory:": cakephp/migrations 4 reconnects between migration sets, which
+// would give every set its own empty in-memory database.
+$sqliteFile = TMP . 'oauth-test-' . getmypid() . '.sqlite';
+if (!is_dir(TMP)) {
+    mkdir(TMP, 0777, true);
+}
+register_shutdown_function(static function () use ($sqliteFile): void {
+    if (is_file($sqliteFile)) {
+        unlink($sqliteFile);
+    }
+});
+ConnectionManager::setConfig('test', ['url' => getenv('DB_URL') ?: 'sqlite:///' . $sqliteFile, 'timezone' => 'UTC']);
 ConnectionManager::alias('test', 'default');
 
 Configure::write('OAuthServer', [
