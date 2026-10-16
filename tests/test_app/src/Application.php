@@ -83,8 +83,9 @@ class Application extends BaseApplication implements
         $service = new AuthenticationService([
             'identityAttribute' => Configure::read('TestApp.identityAttribute', 'identity'),
         ]);
-        $service->loadAuthenticator('Authentication.Session', ['sessionKey' => 'Auth']);
+        // The token comes first: a session cookie must not hide a revoked or foreign bearer token.
         $service->loadAuthenticator('CakeDC/OAuthServer.Token', ['resource' => 'http://localhost/api']);
+        $service->loadAuthenticator('Authentication.Session', ['sessionKey' => 'Auth']);
 
         return $service;
     }

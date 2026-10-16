@@ -15,7 +15,8 @@ use CakeDC\OAuthServer\Config\PluginConfig;
 final class UsersIntegration
 {
     /**
-     * Registers the token authenticator and the RBAC rules provider, keeping what the application set.
+     * Registers the token authenticator (in front of the others) and the RBAC rules provider, keeping
+     * what the application set.
      *
      * The authenticator validates against `OAuthServer.users.resource` when set, otherwise against the
      * server's default resource.
@@ -34,7 +35,11 @@ final class UsersIntegration
             if ($resource !== null) {
                 $settings['resource'] = $resource;
             }
-            Configure::write('Auth.Authenticators.OAuthServerToken', $settings);
+            // First in line: the first authenticator that succeeds wins, so a session cookie sent along with a
+            // revoked or foreign bearer token would otherwise run as the session user, the token unchecked.
+            $others = Configure::read('Auth.Authenticators');
+            $others = is_array($others) ? $others : [];
+            Configure::write('Auth.Authenticators', ['OAuthServerToken' => $settings] + $others);
         }
         // Rules cannot be put in Configure: cakedc/auth replaces them when it loads `config/permissions.php`.
         // The RbacPolicy of cakedc/users hands its `adapter` settings to Rbac.

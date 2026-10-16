@@ -9,6 +9,7 @@ use Cake\Log\Log;
 use Cake\TestSuite\IntegrationTestTrait;
 use Cake\TestSuite\TestCase;
 use CakeDC\OAuth\Server\Grant\Pkce;
+use CakeDC\OAuth\Server\Testing\FrozenClock;
 use CakeDC\OAuthServer\OAuthServer;
 use CakeDC\OAuthServer\Test\Support\FakeDns;
 use CakeDC\OAuthServer\Test\Support\FakeTransport;
@@ -33,11 +34,13 @@ class EndToEndTest extends TestCase
      */
     private array $settings = [];
 
+    private FakeTransport $transport;
+
     protected function setUp(): void
     {
         parent::setUp();
         $this->settings = (array)Configure::read('OAuthServer');
-        $transport = new FakeTransport();
+        $transport = $this->transport = new FakeTransport();
         // The shape of the document claude.ai publishes.
         $transport->serve(self::CLAUDE, [
             'client_id' => self::CLAUDE,
@@ -99,6 +102,7 @@ class EndToEndTest extends TestCase
         $this->assertStringStartsWith($redirect . '?', $location);
         parse_str((string)parse_url($location, PHP_URL_QUERY), $params);
         $this->assertSame('s', $params['state'] ?? null);
+        $this->assertSame('http://localhost', $params['iss'] ?? null);
         $this->configRequest(['headers' => ['Content-Type' => 'application/x-www-form-urlencoded']]);
         $this->post('/oauth/token', [
             'grant_type' => 'authorization_code',
@@ -131,8 +135,6 @@ class EndToEndTest extends TestCase
 
     private function me(string $token): void
     {
-        // A session left from a page request would authenticate before the token is looked at.
-        $this->_session = [];
         $this->configRequest(['headers' => ['Authorization' => 'Bearer ' . $token]]);
         $this->get('/api/me');
     }
@@ -186,6 +188,7 @@ class EndToEndTest extends TestCase
         $refreshed = $this->refresh(self::CLAUDE, $tokens['refresh_token']);
         $this->assertResponseOk();
         $this->assertNotSame($tokens['access_token'], $refreshed['access_token']);
+        $this->assertNotSame($tokens['refresh_token'], $refreshed['refresh_token']);
         $this->me($refreshed['access_token']);
         $this->assertResponseOk();
 
@@ -203,6 +206,11 @@ class EndToEndTest extends TestCase
         $this->session(['Auth' => ['id' => 1]]);
         $this->get('/oauth/connections');
         $this->assertResponseContains('No application is connected.');
+
+        // The consent went with the connection: the next attempt asks again.
+        $this->get('/oauth/authorize?' . $this->authorizeQuery(self::CLAUDE, self::CALLBACK));
+        $this->assertResponseOk();
+        $this->assertResponseContains('claude.ai wants to access Test API');
     }
 
     public function testAClaudeCodeStyleLoopbackClientRegistersAndConnects(): void
@@ -284,7 +292,10 @@ class EndToEndTest extends TestCase
             'days' => '7',
         ]);
         $this->assertResponseOk();
-        $this->assertSame(1, preg_match('/(test_pat_[A-Za-z0-9_-]{43})/', (string)$this->_response->getBody(), $matches));
+        $this->assertSame(
+            1,
+            preg_match('/(test_pat_[A-Za-z0-9_-]{43})/', (string)$this->_response->getBody(), $matches),
+        );
 
         $this->me($matches[1]);
         $this->assertResponseOk();
@@ -302,12 +313,57 @@ class EndToEndTest extends TestCase
         $this->get('/oauth/authorize?' . $this->authorizeQuery($client->clientId, 'https://app.example.com/cb'));
         $this->assertRedirectContains('/login?redirect=');
         $this->assertResponseNotContains('wants to access');
+        $this->assertNull($this->_requestSession->read('Auth'));
         $this->assertSame([], $this->fetchTable('CakeDC/OAuthServer.OauthConsents')->find()->all()->toArray());
 
         $this->withOAuthToken($token);
         $this->get('/oauth/connections');
         $this->assertRedirectContains('/login');
         $this->assertResponseNotContains('Connected applications');
+        $this->assertNull($this->_requestSession->read('Auth'));
+    }
+
+    public function testASessionCookieDoesNotHideARevokedBearerToken(): void
+    {
+        $token = $this->oauthTokenFor(1, [], 'http://localhost/api');
+        $this->session(['Auth' => ['id' => 1]]);
+        $this->me($token);
+        $this->assertResponseOk();
+
+        $this->exec('oauth token revoke --subject 1');
+        $this->assertExitSuccess();
+
+        $this->session(['Auth' => ['id' => 1]]);
+        $this->me($token);
+        $this->assertResponseCode(401);
+    }
+
+    public function testASessionCookieWithAValidBearerTokenRunsAsTheTokenOwner(): void
+    {
+        $token = $this->oauthTokenFor(1, [], 'http://localhost/api');
+        // The session says Grace, the token says Ada: the token is checked first and wins.
+        $this->session(['Auth' => ['id' => 2]]);
+        $this->me($token);
+
+        $this->assertResponseOk();
+        $body = (array)json_decode((string)$this->_response->getBody(), true);
+        $this->assertSame('1', (string)$body['id']);
+        $this->assertSame(['api'], $body['scopes']);
+    }
+
+    public function testASessionWithABearerTokenIsNoLoginAtTheConsentPage(): void
+    {
+        $token = $this->oauthTokenFor(1, [], 'http://localhost/api');
+        $client = OAuthServer::server()->clientRegistrar()
+            ->create('App', ['https://app.example.com/cb'], false)['client'];
+
+        // The request authenticates as the token identity, which is never a browser login: fail closed.
+        $this->session(['Auth' => ['id' => 1]]);
+        $this->withOAuthToken($token);
+        $this->get('/oauth/authorize?' . $this->authorizeQuery($client->clientId, 'https://app.example.com/cb'));
+
+        $this->assertRedirectContains('/login?redirect=');
+        $this->assertResponseNotContains('wants to access');
     }
 
     public function testPersonalTokensSwitchedOffStillListAndRevoke(): void
@@ -338,26 +394,62 @@ class EndToEndTest extends TestCase
         $this->assertResponseNotContains('Personal access tokens');
     }
 
-    public function testARevokedClientStaysRevokedAfterPruning(): void
+    public function testARevokedMetadataDocumentClientStaysRevokedAfterPruning(): void
     {
-        $client = OAuthServer::server()->clientRegistrar()
-            ->create('App', ['https://app.example.com/cb'], false)['client'];
-        $tokens = $this->connect(1, $client->clientId, 'https://app.example.com/cb');
+        $clock = new FrozenClock();
+        Configure::write('OAuthServer.services', [
+            'transport' => $this->transport,
+            'dns' => new FakeDns(),
+            'clock' => $clock,
+        ]);
+        OAuthServer::reset();
+        $tokens = $this->connect(1, self::CLAUDE, self::CALLBACK);
 
-        $this->exec('oauth client revoke ' . $client->clientId);
+        $this->exec('oauth client revoke ' . self::CLAUDE);
         $this->assertExitSuccess();
+        // Long enough for the pruner to consider an unused metadata document client.
+        $clock->advance(40 * 86400);
         $this->exec('oauth prune');
         $this->assertExitSuccess();
 
         $row = $this->fetchTable('CakeDC/OAuthServer.OauthClients')
-            ->find()->where(['client_id' => $client->clientId])->first();
+            ->find()->where(['client_id' => self::CLAUDE])->first();
         $this->assertNotNull($row);
         $this->assertNotNull($row->get('revoked_at'));
+        $this->assertSame([], $this->fetchTable('CakeDC/OAuthServer.OauthTokens')->find()->all()->toArray());
         $this->me($tokens['access_token']);
         $this->assertResponseCode(401);
         $this->session(['Auth' => ['id' => 1]]);
-        $this->get('/oauth/authorize?' . $this->authorizeQuery($client->clientId, 'https://app.example.com/cb'));
+        $this->get('/oauth/authorize?' . $this->authorizeQuery(self::CLAUDE, self::CALLBACK));
         $this->assertResponseCode(400);
         $this->assertResponseNotContains('wants to access');
+        $this->assertSame('', $this->_response->getHeaderLine('Location'));
+    }
+
+    public function testClaudeCodeUsesAnyLoopbackPortFromItsMetadataDocument(): void
+    {
+        $url = 'https://claude.ai/oauth/claude-code-client-metadata';
+        $this->transport->serve($url, [
+            'client_id' => $url,
+            'client_name' => 'Claude Code',
+            'client_uri' => 'https://claude.ai',
+            'redirect_uris' => ['http://localhost/callback', 'http://127.0.0.1/callback'],
+            'grant_types' => ['authorization_code', 'refresh_token'],
+            'response_types' => ['code'],
+            'token_endpoint_auth_method' => 'none',
+        ]);
+
+        // Another port than the registered one.
+        $tokens = $this->connect(1, $url, 'http://localhost:54321/callback');
+        $this->me($tokens['access_token']);
+        $this->assertResponseOk();
+
+        $refused = ['http://localhost:54321/other', 'http://[::1]:54321/callback', 'https://localhost:54321/callback'];
+        foreach ($refused as $bad) {
+            $this->session(['Auth' => ['id' => 1]]);
+            $this->get('/oauth/authorize?' . $this->authorizeQuery($url, $bad));
+            $this->assertResponseCode(400, $bad);
+            $this->assertResponseNotContains('wants to access');
+        }
     }
 }

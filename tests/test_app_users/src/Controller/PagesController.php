@@ -5,6 +5,7 @@ namespace UsersTestApp\Controller;
 
 use Cake\Controller\Controller;
 use Cake\Http\Response;
+use CakeDC\OAuthServer\OAuthServer;
 
 /**
  * A protected API route that answers with the identity of the request.
@@ -26,6 +27,9 @@ class PagesController extends Controller
 
         return $this->response
             ->withType('application/json')
-            ->withStringBody((string)json_encode(['id' => $identity->getIdentifier()]));
+            ->withStringBody((string)json_encode([
+                'id' => $identity->getIdentifier(),
+                'scopes' => OAuthServer::token($this->request)?->scopes,
+            ]));
     }
 }

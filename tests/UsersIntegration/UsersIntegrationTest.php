@@ -224,6 +224,11 @@ class UsersIntegrationTest extends TestCase
         $this->assertFalse($rbac->checkPermissions($user, $this->routed('CakeDC/Users', 'Users', 'profile')));
         $this->assertFalse($rbac->checkPermissions($user, $this->routed(null, 'Pages', 'secret')));
         $this->assertFalse($rbac->checkPermissions($user, $this->routed('CakeDC/OAuthServer', 'Other', 'index')));
+        // The rule names the plugin: same controller and action names elsewhere stay closed.
+        foreach ([[], $user] as $who) {
+            $this->assertFalse($rbac->checkPermissions($who, $this->routed(null, 'OAuth', 'token')));
+            $this->assertFalse($rbac->checkPermissions($who, $this->routed('Other', 'OAuth', 'authorize')));
+        }
         // The application's own rules survive behind the OAuth rule.
         $this->assertTrue($rbac->checkPermissions($user, $this->routed(null, 'Pages', 'me')));
     }
@@ -235,22 +240,84 @@ class UsersIntegrationTest extends TestCase
         $this->assertSame(RbacPermissionsProvider::class, $provider);
 
         try {
-            Configure::write('Auth.RbacPolicy.adapter.permissions_provider_class', 'App\\Mine\\Provider');
-            Configure::write('Auth.Authenticators.OAuthServerToken', ['className' => 'App\\Mine\\Authenticator']);
+            Configure::write('Auth.RbacPolicy.adapter.permissions_provider_class', 'Acme\\Mine\\Provider');
+            Configure::write('Auth.Authenticators.OAuthServerToken', ['className' => 'Acme\\Mine\\Authenticator']);
 
             UsersIntegration::apply();
 
             $this->assertSame(
-                'App\\Mine\\Provider',
+                'Acme\\Mine\\Provider',
                 Configure::read('Auth.RbacPolicy.adapter.permissions_provider_class'),
             );
             $this->assertSame(
-                ['className' => 'App\\Mine\\Authenticator'],
+                ['className' => 'Acme\\Mine\\Authenticator'],
                 Configure::read('Auth.Authenticators.OAuthServerToken'),
             );
         } finally {
             Configure::write('Auth.RbacPolicy.adapter.permissions_provider_class', $provider);
             Configure::write('Auth.Authenticators.OAuthServerToken', $authenticator);
         }
+    }
+
+    public function testTheTokenAuthenticatorComesFirst(): void
+    {
+        $this->assertSame('OAuthServerToken', array_key_first((array)Configure::read('Auth.Authenticators')));
+        $this->assertArrayHasKey('Session', (array)Configure::read('Auth.Authenticators'));
+    }
+
+    public function testASessionCookieDoesNotHideARevokedBearerToken(): void
+    {
+        $user = $this->createUser();
+        $token = $this->oauthTokenFor($user, [], 'http://localhost/api');
+        $this->session(['Auth' => $user]);
+        $this->withOAuthToken($token);
+        $this->get('/api/me');
+        $this->assertResponseOk();
+
+        $this->exec('oauth token revoke --subject ' . $user->get('id'));
+        $this->assertExitSuccess();
+
+        $this->session(['Auth' => $user]);
+        $this->withOAuthToken($token);
+        $this->get('/api/me');
+        $this->assertResponseCode(401);
+    }
+
+    public function testASessionCookieWithAValidBearerTokenRunsAsTheTokenOwner(): void
+    {
+        $user = $this->createUser();
+        $token = $this->oauthTokenFor($user, [], 'http://localhost/api');
+        $users = $this->fetchTable('CakeDC/Users.Users');
+        $other = $users->saveOrFail($users->newEntity([
+            'username' => 'grace',
+            'email' => 'grace@example.com',
+            'password' => 'secret-password',
+            'active' => true,
+            'role' => 'user',
+        ], ['accessibleFields' => ['*' => true]]));
+
+        $this->session(['Auth' => $other]);
+        $this->withOAuthToken($token);
+        $this->get('/api/me');
+
+        $this->assertResponseOk();
+        $body = (array)json_decode((string)$this->_response->getBody(), true);
+        $this->assertSame((string)$user->get('id'), (string)$body['id']);
+        $this->assertSame(['api'], $body['scopes']);
+    }
+
+    public function testASessionWithABearerTokenIsNoLoginAtTheConsentPage(): void
+    {
+        $user = $this->createUser();
+        $token = $this->oauthTokenFor($user, [], 'http://localhost/api');
+        $client = OAuthServer::server()->clientRegistrar()
+            ->create('Claude', ['https://app.example.com/cb'], false)['client'];
+
+        $this->session(['Auth' => $user]);
+        $this->withOAuthToken($token);
+        $this->get($this->prefix . '/authorize?' . $this->authorizeQuery($client->clientId));
+
+        $this->assertRedirectContains('/login?redirect=');
+        $this->assertResponseNotContains('Signed in as');
     }
 }
