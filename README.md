@@ -75,7 +75,7 @@ through.
    ];
    ```
 
-5. Let OAuth clients call the token endpoints, and API and MCP clients call your resources' routes, without a CSRF token (on those routes a request is skipped when it carries no cookie, or a cookie and a valid bearer token, see [installation](docs/installation.md#csrf)). In `Application::middleware()`, after `RoutingMiddleware`:
+5. Let OAuth clients call the token endpoints, and API and MCP clients call your resources' routes, without a CSRF token (on those routes a request is skipped when it carries a bearer token of this server, or no credential at all; the CSRF cookie does not count, see [installation](docs/installation.md#csrf)). In `Application::middleware()`, after `RoutingMiddleware`, with the Token authenticator loaded before the session one:
 
    ```php
    use CakeDC\OAuthServer\OAuthServer;

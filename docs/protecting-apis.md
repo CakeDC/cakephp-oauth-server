@@ -59,11 +59,17 @@ the same problem on its `Authenticators` line; run it after every change.
 
 ## Authenticator order
 
-Load `CakeDC/OAuthServer.Token` before the session authenticator. The first authenticator that succeeds
-wins: if the session came first, a request that carries a session cookie and a revoked or foreign bearer
-token would run as the session user and the token would never be checked. With the token first, a request
-with a bearer token on `/oauth/authorize` is the token's request (not a browser login), and being outside
-the token's path it is refused with 401.
+Load `CakeDC/OAuthServer.Token` before the session, cookie (remember-me) and form authenticators. The first
+authenticator that succeeds wins: if the session came first, a request that carries a session cookie and a
+revoked or made up bearer token would run as the session user and the token would never be checked. With the
+token first, a request with a bearer token of this server is the token's request: a token that does not
+validate gets the 401 challenge and the session is never consulted, and a request with a bearer token on
+`/oauth/authorize` is not a browser login (being outside the token's path it is refused with 401).
+
+This order is also what makes the CSRF rule safe: `OAuthServer::csrfSkip()` skips CSRF for any request with a
+bearer token of this server's prefix on the token paths, without looking the token up
+([CSRF on token routes](#csrf-on-token-routes)). `bin/cake oauth check` fails when a session, cookie or form
+authenticator comes before the Token authenticator.
 
 ## Where a token works
 
@@ -141,14 +147,17 @@ Pragma: no-cache
 
 A POST, PUT or DELETE from an API client to your API route would be rejected by Cake's CSRF middleware,
 because API clients send no CSRF token. On the routes of your resources, `OAuthServer::csrfSkip()` (see
-[installation](installation.md#csrf)) returns `true` for a request that carries no cookie (nor another
-credential a browser sends by itself, such as HTTP Basic) and for a request that carries a cookie and a valid
-bearer token of this server, so using it in `skipCheckCallback()` is enough. A client whose token expired, was
-revoked or belongs to another resource therefore gets the 401 above with its challenge, and knows to refresh or
-to sign in again; a client that sends no token reaches your action. Keep CSRF protection on for your session
-routes and never disable it globally: a request with a cookie and no valid token of this server (none, a
-foreign one, or one of this server's prefix that does not validate) is still checked, and gets 403 before the
-authenticator sees it.
+[installation](installation.md#csrf)) returns `true` for a request with a bearer token of this server's prefix,
+whatever cookies it carries (a client with a cookie jar sends back the CSRF cookie, a load balancer adds its
+own), and for a request without any credential (no `Authorization` header, no cookie but the CSRF cookie), so
+using it in `skipCheckCallback()` is enough. A client whose token expired, was revoked or belongs to another
+resource therefore gets the 401 above with its challenge, and knows to refresh or to sign in again; a client
+that sends no token reaches your action. Keep CSRF protection on for your session routes and never disable it
+globally: a request without a token of this server that carries a session or other cookie is still checked,
+and gets 403 before the authenticator sees it. Load the Token authenticator first
+([authenticator order](#authenticator-order)): a browser cannot be made to send a bearer token by another
+site, so a bearer request is no CSRF, but only with the Token authenticator first is a session cookie sent along
+with a made up token never used.
 
 ## Reading the token and checking scopes
 

@@ -520,11 +520,19 @@ class CommandsTest extends TestCase
         $this->assertStringContainsString('[WARN] CSRF: no CsrfProtectionMiddleware in the queue', $output);
     }
 
-    public function testCheckWarnsWhenSessionComesBeforeTheTokenAuthenticator(): void
+    public function testCheckFailsWhenAStatefulAuthenticatorComesBeforeTheTokenAuthenticator(): void
     {
-        $output = $this->checkApplication('CakeDC\\OAuthServer\\Test\\Support\\CheckApp\\SessionFirst');
+        // A session (or a remember-me cookie, or a form login) tried first would run a request whose bearer token of
+        // this server does not validate as the signed in person, and such a request skips CSRF.
+        foreach (['SessionFirst' => 'Session', 'FormFirst' => 'Form', 'CookieFirst' => 'Cookie'] as $app => $first) {
+            $output = $this->checkApplication('CakeDC\\OAuthServer\\Test\\Support\\CheckApp\\' . $app);
 
-        $this->assertStringContainsString('[WARN] Authenticators: the Session authenticator comes before the Token', $output);
+            $this->assertStringContainsString(
+                '[FAIL] Authenticators: the ' . $first . ' authenticator comes before the Token authenticator',
+                $output,
+                $app,
+            );
+        }
     }
 
     public function testCheckWarnsWhenThereIsNoTokenAuthenticator(): void

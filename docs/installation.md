@@ -109,26 +109,47 @@ public function middleware(MiddlewareQueue $middlewareQueue): MiddlewareQueue
 `csrfSkip()` returns `true` for three kinds of request:
 
 - a request to the route prefix (`/oauth` by default) plus `token`, `register`, `revoke` or `introspect`;
-- a request **on the routes of one of your resources** that carries no credential a browser sends by itself:
-  no cookie (no `Cookie` header), no HTTP Basic or Digest credentials, no user the web server authenticated
-  (`REMOTE_USER`) and no `Authorization` header with another scheme than `Bearer`. CSRF protects those ambient
-  credentials, and such a request has none, so the check would protect nothing. The Token authenticator or your
-  route answers it instead: an expired, revoked or made up token of this server, one issued for another
-  resource, or one whose owner was deactivated, gets 401 with `WWW-Authenticate: Bearer ... error="invalid_token"`, the signal a client needs to refresh its
-  token or to sign in again, and a request without a token reaches your route, whose own 401 can start a
-  client's discovery (MCP clients POST every message, the first one without a token). Your login page
-  (`OAuthServer.login.url`) is never skipped this way, even when the token paths cover it;
-- a request **on the routes of one of your resources** that carries a cookie and `Authorization: Bearer <token>`,
-  where the token starts with this server's own prefix (`<tokenPrefix>_at_` or `<tokenPrefix>_pat_`) and
-  **validates** for a resource whose routes these are. So a browser application that sends its cookies along
-  with a valid token is not rejected with 403. An Authorization header is not an ambient credential: a page on
-  another site cannot make the browser send a valid token.
+- a request **on the routes of one of your resources** that carries `Authorization: Bearer <token>` where the
+  token starts with this server's own prefix (`<tokenPrefix>_at_` or `<tokenPrefix>_pat_`), whatever else it
+  carries, cookies included. Only the prefix is read and the token is never looked up, so this costs no query.
+  The Token authenticator answers the request: a valid token runs as its owner, and an expired, revoked or made
+  up token of this server, one issued for another resource, or one whose owner was deactivated, gets 401 with
+  `WWW-Authenticate: Bearer ... error="invalid_token"`, the signal a client needs to refresh its token or to
+  sign in again;
+- a request **on the routes of one of your resources** that carries no credential at all: no `Authorization`
+  header, no cookie other than the CSRF middleware's own (`csrfToken`, see below), no HTTP Basic or Digest
+  credentials and no user the web server authenticated (`REMOTE_USER`). CSRF protects those ambient
+  credentials, and such a request has none, so the check would protect nothing. Your route answers it: its own
+  401 can start a client's discovery (MCP clients POST every message, the first one without a token).
 
-"Validates" means the core's token validator accepts it for that resource (without recording a use): a live
-access or personal token. With a cookie, a made up, expired or revoked token with the right prefix, a token of
-another resource, or no token at all gets the normal CSRF check, so a session request cannot get past CSRF by
-adding a bearer header (it gets 403 before the authenticator sees it). That costs one token lookup per such
-request; a request without cookies needs none.
+Why a bearer token is enough: CSRF works by making a browser send what it sends by itself (cookies, HTTP Basic
+credentials) with a request that another site chose. A page on another site cannot make the browser add an
+`Authorization` header; that takes a CORS preflight your application approves with credentials for that site,
+and an application that does so has already given that site everything CSRF protects. With the Token
+authenticator loaded before the session, cookie (remember-me) and form authenticators, the session is never
+consulted for a request with a bearer token of this server: a token that does not validate gets the 401 above,
+never the signed in person's session. `bin/cake oauth check` fails when a stateful authenticator comes first
+([authenticator order](protecting-apis.md#authenticator-order)).
+
+The CSRF cookie does not count. `CsrfProtectionMiddleware` sets it on every GET that comes without one, so a
+client with a cookie jar (httpx in the MCP Python SDK, most REST clients) sends it back with its next POST, and
+it proves nothing about who sent that POST. Every other cookie counts, a load balancer's sticky cookie
+(`AWSALB`) included, so a request without a token that carries one is CSRF checked; with a bearer token of this
+server cookies never matter. If you changed the middleware's `cookieName` option, set
+`OAuthServer.csrfCookieName` to the same name ([configuration](configuration.md#csrfcookiename)):
+
+```php
+// config/app_local.php
+'OAuthServer' => [
+    // The cookieName option of your CsrfProtectionMiddleware (csrfToken by default).
+    'csrfCookieName' => 'XSRF-TOKEN',
+],
+```
+
+With `SessionCsrfProtectionMiddleware` the CSRF token lives in the session, so there is no CSRF cookie to
+ignore and the session cookie counts like any other: a request without a token from a client that kept the
+session cookie of an earlier GET is CSRF checked, while requests with a bearer token of this server are skipped
+as above.
 
 "On the routes of one of your resources" is the rule of the Token authenticator
 ([protecting-apis](protecting-apis.md#where-a-token-works)): both the request path and the static part of the
@@ -145,25 +166,33 @@ empty segment (`//`) or `.` / `..` segments is never skipped, and a token presen
 
 Add `CsrfProtectionMiddleware` after `RoutingMiddleware`, as above and in the CakePHP application skeleton.
 Before routing there is no matched route, so no request is skipped there for being on a resource's routes (the
-client endpoints still are). `csrfSkip()` never throws. The client endpoints are skipped with any configuration,
-a broken one included (they answer 503 then), because they are found where the plugin connected their routes.
-Only a request with a cookie and a bearer token of this server within the token paths builds the server, to
-validate the token; when the configuration cannot be read or the server cannot be built, that request is not
-skipped and a warning goes to the `oauth` log. A request whose token paths or login page cannot be read is not
-skipped either.
+client endpoints still are). `csrfSkip()` never throws and never builds the server. The client endpoints are
+skipped with any configuration, a broken one included (they answer 503 then), because they are found where the
+plugin connected their routes. When the resources, the issuer or `tokenPaths` cannot be read, nothing else is
+skipped and a warning goes to the `oauth` log; so is a request without a token whose login page cannot be told
+(an `OAuthServer.login.url` that names a route that does not exist).
 
 Everything else stays CSRF checked: session routes (with or without cookies), requests on a resource's routes
-that carry a cookie but no valid token of this server, the login page, and the consent and connections pages
+that carry a cookie other than the CSRF cookie but no bearer token of this server, requests with another
+`Authorization` scheme or another server's token, the login page, and the consent and connections pages
 (`<prefix>/authorize` and `<prefix>/connections` are never skipped, whatever the request carries, because they
 are session pages; variants such as a trailing slash or `%61uthorize` are the same page). Never disable CSRF
 protection globally.
 
+The login page (`OAuthServer.login.url`) is never skipped, even when the token paths cover it. A string URL is
+the page at its path. A URL array (the default with cakedc/users) also covers every other route to the same
+action, such as `/Users/login` through the fallback routes: plugin, prefix, controller and action are compared,
+and the positional values when the array gives some. Give the login as an array when other routes reach its
+action.
+
 Keep session pages out of your resources' paths. With `'tokenPaths' => ['/']` every route is on the routes of
-a resource, so a request without cookies skips the check everywhere except the consent and connections pages
-and the login: a form that signs someone in without a session (another login route, a registration that
-signs the new account in) loses its CSRF protection there. And when browsers authenticate to your
-application on a resource's routes by something `csrfSkip()` cannot see, such as a TLS client certificate,
-do not use `csrfSkip()` for those routes.
+a resource, so every sign-in form is one: a request without a token or cookies skips the check everywhere except
+the consent and connections pages and the login, and a form that signs someone in without a session (a second
+login action, a registration that signs the new account in) loses its login CSRF protection there. Avoid
+`['/']` when you have such forms. Give your `Form` authenticator a `loginUrl`, as in the example under
+[authentication](#authentication): without one it reads credentials from every POST, wherever it lands. And when
+browsers authenticate to your application on a resource's routes by something `csrfSkip()` cannot see, such as
+a TLS client certificate, do not use `csrfSkip()` for those routes.
 
 A global `CsrfProtectionMiddleware` also sets a `csrfToken` cookie on the metadata response, which is
 publicly cacheable. Either scope CSRF away from `/.well-known` or accept the cookie.
@@ -172,7 +201,8 @@ publicly cacheable. Either scope CSRF away from `/.well-known` or accept the coo
 `SessionCsrfProtectionMiddleware`): it fails when the callback does not skip the token endpoint or when it also
 skips the consent page, the connections page, the home page or the login. When the CSRF or the authentication
 middleware runs before `RoutingMiddleware` it fails if a Token authenticator of this plugin is loaded (its tokens
-cannot work there) and warns otherwise.
+cannot work there) and warns otherwise. It also fails when a session, cookie or form authenticator comes before
+the Token authenticator.
 
 ## Routes
 
@@ -252,8 +282,11 @@ Rules to know:
   get the login page (a request that carries one of this server's tokens there is refused with 401, being
   outside the token's path). An application that signs people in only with HTTP Basic needs a session login for
   the consent page, otherwise people may loop between the login and the consent page.
-- Load `CakeDC/OAuthServer.Token` before the session authenticator. See
-  [protecting-apis](protecting-apis.md#authenticator-order).
+- Load `CakeDC/OAuthServer.Token` before the session, cookie (remember-me) and form authenticators;
+  `bin/cake oauth check` fails otherwise. See [protecting-apis](protecting-apis.md#authenticator-order).
+- Give the `Form` authenticator a `loginUrl`, as above. Without one it reads credentials from every POST to
+  any route, and on the routes of a resource a POST without a token or cookies is not CSRF checked
+  ([CSRF](#csrf)).
 
 ## Authorization
 

@@ -5,6 +5,8 @@ namespace CakeDC\OAuthServer\Command;
 
 use Authentication\AuthenticationService;
 use Authentication\AuthenticationServiceProviderInterface;
+use Authentication\Authenticator\CookieAuthenticator;
+use Authentication\Authenticator\FormAuthenticator;
 use Authentication\Authenticator\SessionAuthenticator;
 use Authentication\Identifier\IdentifierCollection;
 use Authentication\Middleware\AuthenticationMiddleware;
@@ -116,6 +118,25 @@ class OAuthCheckCommand extends Command
     private array|string|null $middleware = null;
 
     private const MIN_SECRET_LENGTH = 32;
+
+    /**
+     * Authenticators that sign someone in from what a browser sends by itself, by kind: a session, a remember-me
+     * cookie, a login form. The Token authenticator must come before all of them.
+     */
+    private const STATEFUL_AUTHENTICATORS = [
+        'Session' => [SessionAuthenticator::class],
+        'Cookie' => [CookieAuthenticator::class],
+        'Form' => [FormAuthenticator::class, 'CakeDC\\Auth\\Authenticator\\FormAuthenticator'],
+    ];
+
+    /**
+     * What a browser sends for each kind of stateful authenticator.
+     */
+    private const STATEFUL_CREDENTIALS = [
+        'Session' => 'session cookie',
+        'Cookie' => 'remember-me cookie',
+        'Form' => 'login form',
+    ];
 
     /**
      * @inheritDoc
@@ -719,8 +740,11 @@ class OAuthCheckCommand extends Command
     }
 
     /**
-     * The order of the authenticators: the plugin's Token authenticator must come before the session one, or
-     * a session cookie would hide a revoked or foreign bearer token.
+     * The order of the authenticators: the plugin's Token authenticator must come before every stateful one
+     * (session, remember-me cookie, form login). `OAuthServer::csrfSkip()` skips CSRF for any request with a bearer
+     * token of this server's prefix on the token paths; with the Token authenticator first such a request is the
+     * token's (401 when it does not validate), while a stateful authenticator tried first would run a session
+     * cookie sent with a revoked or made up token as the session user.
      *
      * @return array{0: 'pass'|'warn'|'fail', 1: string}
      */
@@ -740,13 +764,17 @@ class OAuthCheckCommand extends Command
             }
         }
         $token = null;
-        $session = null;
+        $stateful = [];
         foreach ($names as $position => $class) {
             if ($token === null && is_a($class, TokenAuthenticator::class, true)) {
                 $token = $position;
             }
-            if ($session === null && is_a($class, SessionAuthenticator::class, true)) {
-                $session = $position;
+            foreach (self::STATEFUL_AUTHENTICATORS as $kind => $classes) {
+                foreach ($classes as $base) {
+                    if (is_a($class, $base, true)) {
+                        $stateful[$position] ??= $kind;
+                    }
+                }
             }
         }
         if ($token === null) {
@@ -756,15 +784,27 @@ class OAuthCheckCommand extends Command
                 . 'issued here are not accepted by this application (fine when your resources live elsewhere)',
             ];
         }
-        if ($session !== null && $session < $token) {
-            return [
-                'warn',
-                'the Session authenticator comes before the Token authenticator: a session cookie sent with a '
-                . 'revoked or foreign bearer token would run as the session user; load the Token one first',
-            ];
+        foreach ($stateful as $position => $kind) {
+            if ($position < $token) {
+                return [
+                    'fail',
+                    sprintf(
+                        'the %s authenticator comes before the Token authenticator: a request with a bearer token of '
+                        . 'this server skips CSRF on the token paths, and with a %s it would run as the signed in '
+                        . 'person when the token is revoked or made up; load the Token authenticator first',
+                        $kind,
+                        self::STATEFUL_CREDENTIALS[$kind],
+                    ),
+                ];
+            }
         }
 
-        return ['pass', $session === null ? 'the Token authenticator is loaded' : 'Token comes before Session'];
+        return [
+            'pass',
+            $stateful === []
+                ? 'the Token authenticator is loaded'
+                : 'Token comes before ' . implode(', ', array_unique($stateful)),
+        ];
     }
 
     /**

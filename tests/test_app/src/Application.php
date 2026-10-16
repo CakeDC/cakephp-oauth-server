@@ -70,7 +70,7 @@ class Application extends BaseApplication implements
     public function routes(RouteBuilder $routes): void
     {
         $routes->scope('/', function (RouteBuilder $builder): void {
-            $builder->connect('/login', ['controller' => 'Pages', 'action' => 'login']);
+            $builder->connect('/login', ['controller' => 'Pages', 'action' => 'login'], ['_name' => 'login']);
             $builder->connect('/api/me', ['controller' => 'Pages', 'action' => 'me']);
             // Deeper API routes, and a sibling whose name starts with "api".
             $builder->connect('/api/**', ['controller' => 'Pages', 'action' => 'me']);
@@ -105,13 +105,6 @@ class Application extends BaseApplication implements
         $service = new AuthenticationService($config);
         // Tests may point the authenticator at another resource or give it other paths.
         $token = (array)Configure::read('TestApp.tokenAuthenticator', ['resource' => 'http://localhost/api']);
-        if (Configure::read('TestApp.sessionFirst') === true) {
-            // A host that got the order wrong: the session is tried before the token.
-            $service->loadAuthenticator('Authentication.Session', ['sessionKey' => 'Auth']);
-            $service->loadAuthenticator('CakeDC/OAuthServer.Token', $token);
-
-            return $service;
-        }
         // The token comes first: a session cookie must not hide a revoked or foreign bearer token.
         $service->loadAuthenticator('CakeDC/OAuthServer.Token', $token);
         $service->loadAuthenticator('Authentication.Session', ['sessionKey' => 'Auth']);

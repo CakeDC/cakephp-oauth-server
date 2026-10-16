@@ -368,24 +368,31 @@ class UsersIntegrationTest extends TestCase
         $this->assertResponseCode(401);
     }
 
-    public function testARevokedTokenPostedWithoutCookiesGetsTheChallengeAndWithACookieTheCsrfCheck(): void
+    public function testARevokedTokenGetsTheChallengeWithOrWithoutACookieAndASessionPostWithoutTokenTheCsrfCheck(): void
     {
         $user = $this->createUser();
         $token = $this->oauthTokenFor($user, [], 'http://localhost/api');
         $this->exec('oauth token revoke --subject ' . $user->get('id'));
         $this->assertExitSuccess();
 
-        // An API client: no cookie, so the integration's Token authenticator answers with its challenge.
+        // An API client without cookies: the integration's Token authenticator answers with its challenge.
         $this->withOAuthToken($token);
         $this->post('/api/me', ['x' => '1']);
         $this->assertResponseCode(401);
         $this->assertHeaderContains('WWW-Authenticate', 'error="invalid_token"');
         $this->assertHeaderContains('WWW-Authenticate', 'The access token was revoked.');
 
-        // A browser with a session cookie: the CSRF check refuses it first.
+        // With the session cookie of a signed in browser: the Token authenticator comes first, so the same answer,
+        // and the session is never consulted.
         $this->session(['Auth' => $user]);
         $this->cookie((string)session_name(), 'a-browser-session');
         $this->withOAuthToken($token);
+        $this->post('/api/me', ['x' => '1']);
+        $this->assertResponseCode(401);
+        $this->assertHeaderContains('WWW-Authenticate', 'The access token was revoked.');
+
+        // The same browser without a token posts like any session form: CSRF checked.
+        $this->session(['Auth' => $user]);
         $this->post('/api/me', ['x' => '1']);
         $this->assertResponseCode(403);
         $this->assertResponseContains('Missing or incorrect CSRF cookie type.');
@@ -548,7 +555,7 @@ class UsersIntegrationTest extends TestCase
         $this->assertOutputContains('[PASS] Users integration: the Token authenticator validates http://localhost/api below the path of its resource');
     }
 
-    public function testCheckWarnsWhenTheSessionAuthenticatorComesFirst(): void
+    public function testCheckFailsWhenTheSessionAuthenticatorComesFirst(): void
     {
         $authenticators = (array)Configure::read('Auth.Authenticators');
         $this->exec('oauth check');
@@ -563,7 +570,8 @@ class UsersIntegrationTest extends TestCase
             Configure::write('Auth.Authenticators', ['OAuthServerToken' => $token] + $authenticators);
         }
 
-        $this->assertOutputContains('[WARN] Authenticators: the Session authenticator comes before the Token');
+        $this->assertExitError();
+        $this->assertOutputContains('[FAIL] Authenticators: the Session authenticator comes before the Token');
     }
 
     public function testARootResourceWithoutExplicitPathsRefusesTokensAndIsReported(): void

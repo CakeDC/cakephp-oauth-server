@@ -21,20 +21,25 @@ skipCheckCallback`. If you changed `routePrefix`, `csrfSkip()` follows it. See
 ## 403 on a POST to your API or MCP endpoint
 
 The CSRF check refused a request on your API or MCP route. `csrfSkip()` skips such a request when it is on the
-routes of a resource and carries either no cookie or a cookie and a valid token of this server
-([installation](installation.md#csrf)). Check, in this order:
+routes of a resource and carries either a bearer token of this server (whatever cookies come with it) or no
+credential at all ([installation](installation.md#csrf)). Check, in this order:
 
 - the request is on the routes of that resource: the request path and the static part of the matched
   route's template are below the resource's path (or `OAuthServer.tokenPaths`). A route that starts with a
   placeholder (`/{lang}/api/...`) is not; give it a static prefix (`/api/{lang}/...`);
 - `CsrfProtectionMiddleware` comes after `RoutingMiddleware`;
-- the client sends cookies (a browser, or an HTTP client with a cookie jar) with a token that does not
-  validate: expired, revoked, made up, for another resource, or none at all. With a cookie that request is CSRF
-  checked and gets 403 before the authenticator could answer 401; without cookies it gets the 401 with
-  `error="invalid_token"`. Refresh the token, or keep the client from sending your site's cookies;
+- the request has no token, or a token that is not this server's (another server's, or a refresh token sent as
+  a bearer token), and carries a cookie other than the CSRF cookie: a session, a remember-me cookie, a load
+  balancer's sticky cookie (`AWSALB`). That request is CSRF checked. Send this server's access token, or keep
+  the client from sending those cookies. A token of this server that expired or was revoked is not the cause:
+  it gets the authenticator's 401 with `error="invalid_token"`, cookies or not;
+- you renamed the CSRF cookie (the middleware's `cookieName` option) but not `OAuthServer.csrfCookieName`, so
+  the CSRF cookie a client with a cookie jar sends back counts as a credential
+  ([configuration](configuration.md#csrfcookiename));
 - the client sends HTTP Basic credentials or another `Authorization` scheme than `Bearer`, or your web server
   authenticated the request (`REMOTE_USER`): browsers send those by themselves, so the check stays;
-- the route is your login page (`OAuthServer.login.url`) or the consent or connections page: never skipped;
+- the route is your login page (`OAuthServer.login.url`, or another route to its action when it is an array)
+  or the consent or connections page: never skipped;
 - the `OAuthServer` resources, issuer or `tokenPaths` are invalid: where a token works cannot be told, so only
   the client endpoints are skipped. `bin/cake oauth check` names the setting.
 
@@ -184,7 +189,7 @@ See the table in [commands](commands.md#oauth-check). The ones that most often f
 | `Routes` | A route of your application connected before the plugin's takes `<prefix>/token` |
 | `Middleware` | `CsrfProtectionMiddleware` or `AuthenticationMiddleware` runs before `RoutingMiddleware`, where the routes of a resource cannot be told apart (it fails when a Token authenticator is loaded) |
 | `CSRF` | The skip callback is missing, it skips session pages too (a callback like `fn () => true`), or there is no CSRF middleware at all |
-| `Authenticators` | The Session authenticator is loaded before the Token one, there is no Token authenticator, or it refuses every token (an undeclared `resource`, a root resource without `paths`) |
+| `Authenticators` | A session, cookie (remember-me) or form authenticator is loaded before the Token one, there is no Token authenticator, or it refuses every token (an undeclared `resource`, a root resource without `paths`) |
 | `RBAC` | The bypass rule is missing |
 | `Rate limiting` | The cache configuration named in `rateLimit.cache` does not exist, or it is an `Array` or `Null` engine, which keeps nothing between requests |
 | `Client metadata documents` | `ext-curl` is not installed |

@@ -49,9 +49,9 @@ abstract class CheckApplication extends BaseApplication implements Authenticatio
     {
         $service = new AuthenticationService();
         foreach ($this->authenticators() as $name) {
-            $service->loadAuthenticator($name, $name === 'Authentication.Session' ? [] : [
+            $service->loadAuthenticator($name, str_starts_with($name, 'CakeDC/OAuthServer.') ? [
                 'resource' => $this->resource(),
-            ]);
+            ] : []);
         }
 
         return $service;

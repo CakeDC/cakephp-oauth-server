@@ -76,19 +76,25 @@ The OAuth endpoints themselves (`/oauth/authorize`, `/oauth/token`, the metadata
 this plugin, next to your MCP endpoint.
 
 MCP clients (Streamable HTTP) POST every message to your endpoint, the first one without a token and the next
-ones with `Authorization: Bearer ...`, and they send no cookies. With `OAuthServer::csrfSkip()` in your
-`CsrfProtectionMiddleware` (see [installation](installation.md#csrf)) those POSTs are not rejected with 403 on
-the routes of your MCP resource (`/mcp` for `https://example.com/mcp`), while CSRF stays on for session routes.
-The first POST, without a token, reaches your endpoint, whose 401 with
-`WWW-Authenticate: Bearer resource_metadata="..."` starts the client's discovery; a POST whose token expired or
-was revoked reaches the token check (the SDK's middleware, or the Token authenticator where one covers the
-route), whose 401 with `error="invalid_token"` makes the client refresh or sign in again. A request that does
-carry a cookie is skipped only with a token that validates. Both the skip and the Token authenticator apply
-only on the routes of the resource: both the request path and the template of the route that matched it must
-start with `/mcp`. Connect your MCP endpoint with that static prefix, and the token cannot be used on routes of your
-application that are not below it, including routes that start with a placeholder such as
-`/{tenant}/account/delete` ([where a token works](protecting-apis.md#where-a-token-works)). Never disable
-CSRF globally.
+ones with `Authorization: Bearer ...`. With `OAuthServer::csrfSkip()` in your `CsrfProtectionMiddleware` (see
+[installation](installation.md#csrf)) those POSTs are not rejected with 403 on the routes of your MCP resource
+(`/mcp` for `https://example.com/mcp`), while CSRF stays on for session routes:
+
+- a POST with a token of this server is skipped whatever cookies it carries, so a client with a cookie jar
+  (the MCP Python SDK keeps cookies through httpx) is fine. A POST whose token expired or was revoked reaches
+  the token check (the SDK's middleware, or the Token authenticator where one covers the route), whose 401 with
+  `error="invalid_token"` makes the client refresh or sign in again;
+- the first POST, without a token, is skipped when it carries no other credential: no `Authorization` header
+  and no cookie but the CSRF middleware's own `csrfToken` cookie, which the middleware sets on any GET and a
+  cookie jar sends back. It reaches your endpoint, whose 401 with `WWW-Authenticate: Bearer resource_metadata="..."`
+  starts the client's discovery. A token-less POST with another cookie (a session, a load balancer's sticky
+  cookie) is CSRF checked; a client that hits that 403 should send its token, or not keep those cookies.
+
+Both the skip and the Token authenticator apply only on the routes of the resource: both the request path and
+the template of the route that matched it must start with `/mcp`. Connect your MCP endpoint with that static
+prefix, and the token cannot be used on routes of your application that are not below it, including routes that
+start with a placeholder such as `/{tenant}/account/delete`
+([where a token works](protecting-apis.md#where-a-token-works)). Never disable CSRF globally.
 
 ## 3. Connect a client
 

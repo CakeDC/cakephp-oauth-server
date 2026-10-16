@@ -9,12 +9,17 @@ and never relaxes what it enforces. This page lists what the plugin adds and wha
 
 - **Cake's CSRF stays on the consent and connections forms.** By `OAuthServer::csrfSkip()` only the token,
   register, revoke and introspect endpoints are skipped, plus, on the routes of a resource (see the next
-  point), requests that carry no cookie or other credential a browser sends by itself (CSRF has nothing to
-  protect there, and an expired or revoked token gets the authenticator's 401) and requests with a cookie and a
-  bearer token that validates. A request with a cookie and a token of this server's prefix that does not
-  validate gets the normal CSRF check, and so does the login page. The forms are built with `FormHelper`; a
-  template override must do the same ([pages](pages.md#forms-and-csrf)). The core also signs the forms with
-  `OAuthServer.secret`.
+  point), requests with a bearer token of this server's prefix (a page on another site cannot make a browser
+  attach one without a CORS preflight approved with credentials, and an expired or revoked token gets the
+  authenticator's 401) and requests without any credential (no `Authorization` header, no cookie but the CSRF
+  cookie: CSRF has nothing to protect there). A request without a token that carries a session or other cookie
+  gets the normal CSRF check, and so do the login page and the consent and connections pages. The forms are
+  built with `FormHelper`; a template override must do the same ([pages](pages.md#forms-and-csrf)). The core
+  also signs the forms with `OAuthServer.secret`.
+- **The Token authenticator comes first.** A bearer request skips CSRF without its token being looked up, so a
+  session cookie sent with a made up token must never reach the session authenticator. With the Token
+  authenticator before the session, cookie and form authenticators it gets the 401 challenge instead;
+  `oauth check` fails on any other order ([protecting-apis](protecting-apis.md#authenticator-order)).
 - **A token works only on the routes of its resource.** The Token authenticator authenticates a token only
   when both the request path and the static part of the template of the route that matched it are below
   the path of the resource it was issued for (`/api` for `https://example.com/api`, or its `paths` option);
@@ -109,7 +114,10 @@ Events (the audit trail) are described in [events](events.md).
 - [ ] `trustProxy` is enabled only when the application is firewalled so that only your proxies reach it
       (Cake does not check `REMOTE_ADDR` against the list), with the proxies listed
       ([deployment](deployment.md#trusted-proxies-and-the-client-ip)).
-- [ ] `OAuthServer::csrfSkip()` is in your `CsrfProtectionMiddleware`.
+- [ ] `OAuthServer::csrfSkip()` is in your `CsrfProtectionMiddleware`, `OAuthServer.csrfCookieName` matches its
+      `cookieName`, and the Token authenticator comes before the session, cookie and form authenticators.
+- [ ] Your CORS policy never allows credentials for other sites on the routes of your resources (that would
+      let their pages send bearer requests through a visitor's browser).
 - [ ] `bin/cake oauth prune` runs daily.
 - [ ] Registration is `closed` or `token` unless you need `open`; `cimd.allowedHosts` lists the hosts you
       expect (include `claude.ai` if you use it).

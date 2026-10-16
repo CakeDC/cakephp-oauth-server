@@ -177,30 +177,25 @@ class TokenPathsTest extends TestCase
         $this->assertResponseContains('"id":1');
     }
 
-    public function testATokenWithTheServersPrefixThatDoesNotValidateGetsTheCsrfCheckWhenTheBrowserHasASession(): void
+    public function testATokenOfThisServerThatDoesNotValidateGets401EvenWhenTheBrowserHasASession(): void
     {
-        // The session comes first here, so the session would run the action if CSRF let the request through.
-        Configure::write('TestApp.sessionFirst', true);
+        // CSRF is skipped for the bearer token everywhere here, and the session route is outside the token's own
+        // paths. The Token authenticator comes first, so it answers the token and the session is never consulted.
         Configure::write('OAuthServer.tokenPaths', ['/']);
         OAuthServer::reset();
-        $this->session(['Auth' => ['id' => 1]]);
-        $this->withSessionCookie();
-        $this->withOAuthToken('test_at_' . str_repeat('x', 43));
-
-        $this->post('/account/delete', ['x' => '1']);
-
-        $this->assertRefusedByCsrf();
-        $this->assertNull(Configure::read('TestApp.accountDeleted'), 'The action must not run.');
-
-        // A revoked token is no better.
         $token = $this->oauthTokenFor(1, ['api'], 'http://localhost/api');
         $this->exec('oauth token revoke --subject 1');
-        $this->session(['Auth' => ['id' => 1]]);
-        $this->withSessionCookie();
-        $this->withOAuthToken($token);
-        $this->post('/account/delete', ['x' => '1']);
-        $this->assertRefusedByCsrf();
-        $this->assertNull(Configure::read('TestApp.accountDeleted'), 'The action must not run.');
+
+        foreach (['test_at_' . str_repeat('x', 43), $token] as $value) {
+            $this->session(['Auth' => ['id' => 1]]);
+            $this->withSessionCookie();
+            $this->withOAuthToken($value);
+            $this->post('/account/delete', ['x' => '1']);
+
+            $this->assertResponseCode(401);
+            $this->assertHeaderContains('WWW-Authenticate', 'Bearer error="invalid_token"');
+            $this->assertNull(Configure::read('TestApp.accountDeleted'), 'The action must not run.');
+        }
     }
 
     public function testTheRouteThatMatchedMustBeBelowThePathsToo(): void

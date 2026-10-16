@@ -33,6 +33,7 @@ final class PluginConfig
         'services' => ['clock', 'transport', 'dns'],
         'users' => ['resource', 'paths'],
         'tokenPaths' => [],
+        'csrfCookieName' => [],
     ];
 
     private const SERVICE_TYPES = [
@@ -241,6 +242,7 @@ final class PluginConfig
         $this->usersResource();
         self::pathList($this->section('users')['paths'] ?? null, 'OAuthServer.users.paths');
         $this->tokenPaths();
+        $this->csrfCookieName();
     }
 
     /**
@@ -410,6 +412,28 @@ final class PluginConfig
     {
         return self::pathList($this->section('users')['paths'] ?? null, 'OAuthServer.users.paths')
             ?? $this->tokenPaths();
+    }
+
+    /**
+     * The name of the cookie the application's CsrfProtectionMiddleware sets (its `cookieName` option):
+     * `OAuthServer.csrfCookieName`, default `csrfToken`. `OAuthServer::csrfSkip()` does not count that cookie as an
+     * ambient credential.
+     *
+     * @return string
+     * @throws \InvalidArgumentException When it is not a cookie name.
+     */
+    public function csrfCookieName(): string
+    {
+        $name = $this->settings['csrfCookieName'] ?? 'csrfToken';
+        // A cookie name is an RFC 7230 token: no separators, spaces or control characters.
+        if (!is_string($name) || preg_match('/\A[!#$%&\'*+\-.^_`|~0-9A-Za-z]+\z/', $name) !== 1) {
+            throw new InvalidArgumentException(
+                '"OAuthServer.csrfCookieName" must be the name of the CSRF middleware\'s cookie '
+                . '(its cookieName option).',
+            );
+        }
+
+        return $name;
     }
 
     /**

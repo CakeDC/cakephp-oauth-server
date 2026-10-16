@@ -165,17 +165,35 @@ matched route), and scope checks inside them are your job. See [cakedc-users](ca
 ### `tokenPaths`
 
 A list of path prefixes (`['/api', '/mcp']`) where bearer tokens of this server are expected. Optional.
-On routes below these paths `OAuthServer::csrfSkip()` skips CSRF for a request without cookies and for a request
-with a cookie and a token that validates ([installation](installation.md#csrf)), and the cakedc/users
-integration authenticates only there when `users.paths` is not set. Default: the paths of the declared
-`resources`, where a resource at the host root contributes nothing. Set `['/']` to make tokens work on every
-route; that is a deliberate choice, never a default: a request without cookies then skips CSRF on every route
-except the consent and connections pages and the login. Prefixes match on segment boundaries (`/api` covers
+On routes below these paths `OAuthServer::csrfSkip()` skips CSRF for a request with a bearer token of this
+server and for a request with no credential at all (no `Authorization` header, no cookie but the CSRF cookie)
+([installation](installation.md#csrf)), and the cakedc/users integration authenticates only there when
+`users.paths` is not set. Default: the paths of the declared `resources`, where a resource at the host root
+contributes nothing. Set `['/']` to make tokens work on every route; that is a deliberate choice, never a
+default: a request without a token or cookies then skips CSRF on every route except the consent and connections
+pages and the login action, so every other sign-in form loses its login CSRF protection; avoid it when you have
+such forms. Prefixes match on segment boundaries (`/api` covers
 `/api/x`, not `/apix`) and are compared with the full request path and with the static part of the matched
 route's template, base directory included ([where a token works](protecting-apis.md#where-a-token-works)).
 If you set
 custom `paths` on your own Token authenticator, set `tokenPaths` to the same list (or pass it to
 `csrfSkip($request, $paths)`).
+
+### `csrfCookieName`
+
+The name of the cookie your `CsrfProtectionMiddleware` sets: its `cookieName` option. Default `csrfToken`, the
+middleware's default. `OAuthServer::csrfSkip()` ignores that cookie when it decides whether a request without a
+token carries a credential: the middleware sets it on every GET, so clients with a cookie jar send it back, and
+it proves nothing. Set it when you changed the middleware's option:
+
+```php
+'csrfCookieName' => 'XSRF-TOKEN',
+```
+
+A value that is not a cookie name (an RFC 7230 token: letters, digits and ``!#$%&'*+-.^_`|~``) is an invalid
+setting like any other ([an invalid configuration](#an-invalid-configuration)); `csrfSkip()` then ignores no
+cookie. `SessionCsrfProtectionMiddleware` sets no such cookie, so the setting does not apply to it
+([installation](installation.md#csrf)).
 
 ### `services`
 
@@ -208,8 +226,8 @@ named interface or `InvalidArgumentException` is thrown.
 
 An invalid `OAuthServer` setting of any kind (an http issuer behind a TLS proxy, a resource declared with a
 string instead of an array, a `Security.salt` shorter than 32 characters without `OAuthServer.secret`, an
-unknown key, an invalid `users` or `tokenPaths` value) keeps the server from being built. It never takes the
-application down:
+unknown key, an invalid `users`, `tokenPaths` or `csrfCookieName` value) keeps the server from being built. It
+never takes the application down:
 
 | Where | What happens |
 | --- | --- |
@@ -217,15 +235,16 @@ application down:
 | The metadata document, `token`, `register`, `revoke`, `introspect` | `503` with `{"error": "temporarily_unavailable"}`, `Cache-Control: no-store`, `Retry-After: 300` and the endpoints' usual CORS headers, so browser clients can read it (a CORS preflight gets the usual `204`) |
 | The consent and connections pages | `503`, rendered by your application's error page |
 | A request with a bearer token of this server (`<tokenPrefix>_at_`, `<tokenPrefix>_pat_`) | `401` from the Token authenticator, never passed on to the session. A POST, PUT, PATCH or DELETE reaches it only when `csrfSkip()` lets it through (next line); otherwise the CSRF middleware answers `403` first |
-| `OAuthServer::csrfSkip()` | Still skips the client endpoints. On the routes of a resource it still skips a request without cookies (a bearer one then gets the `401` above) as long as the resources, the issuer and `tokenPaths` can be read; when they cannot, it skips nothing else. It never skips a request with a cookie and a bearer token, which would need the server to validate it |
+| `OAuthServer::csrfSkip()` | Still skips the client endpoints. On the routes of a resource it still skips a request with a bearer token of this server, cookies or not (it then gets the `401` above), and a request without any credential, as long as the resources, the issuer and `tokenPaths` can be read; when they cannot, it skips nothing else. A `tokenPrefix` that is not a string leaves no token recognisable as this server's, so a bearer request is then CSRF checked. It never needs the server |
 | `bin/cake`, migrations | Work as usual; `bin/cake oauth check` reports the setting to fix |
 
 Each refusal writes the reason to the `oauth` log scope (the setting to fix, never a token or the secret):
 look there first when OAuth answers 503 or every token gets 401. A broken configuration costs other requests
 next to nothing: the Token authenticator reads only the `tokenPrefix` setting until a request carries such a
 token, and `csrfSkip()` reads the route prefix (where the plugin connected its endpoints) on every
-state-changing request, plus the resources and `tokenPaths` for a request without cookies and `tokenPrefix`,
-the resources and `tokenPaths` for a bearer request with one; neither builds the server for them. When
+state-changing request, plus `tokenPrefix`, the resources and `tokenPaths` for a request with a bearer token of
+this server or without any credential (and `csrfCookieName` and the login URL for the latter); neither builds
+the server for them. When
 `tokenPrefix` itself is not a string, every bearer token is treated as this server's and refused.
 
 ## A complete example

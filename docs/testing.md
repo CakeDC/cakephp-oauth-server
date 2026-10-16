@@ -78,6 +78,10 @@ class PostsControllerTest extends TestCase
   configuration inside a test (and in `setUp()` as shown).
 - The authenticator that the route uses must be loaded in your `getAuthenticationService()`, for the same
   resource you pass here. See [protecting-apis](protecting-apis.md).
+- IntegrationTestTrait's `session()` puts data in the session but sends no cookie, so a POST after it looks
+  like a request without credentials to `OAuthServer::csrfSkip()`. To test what a browser with a session does,
+  send the session cookie too: `$this->cookie(session_name(), 'any-value')`. Cookies set with `cookie()` stay
+  for the following requests of the test.
 - Tests do not need a rate limit cache: set `'rateLimit' => ['cache' => null]` in the test configuration only (never in production), as the
   plugin's own tests do. Counters would otherwise accumulate across tests in one process.
 - For code that needs a fixed time or a fake metadata fetch, `OAuthServer.services` takes `clock`,

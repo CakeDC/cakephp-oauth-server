@@ -364,4 +364,31 @@ class PluginConfigTest extends TestCase
         $this->expectException(InvalidArgumentException::class);
         $config->usersPaths();
     }
+
+    public function testTheCsrfCookieNameDefaultsToTheMiddlewaresAndIsNotPassedToTheCore(): void
+    {
+        $this->assertSame('csrfToken', (new PluginConfig([]))->csrfCookieName());
+
+        $config = new PluginConfig([
+            'resources' => ['https://example.com/a' => ['scopes' => ['a' => 'A']]],
+            'issuer' => 'https://example.com',
+            'csrfCookieName' => 'XSRF-TOKEN',
+        ]);
+        $this->assertSame('XSRF-TOKEN', $config->csrfCookieName());
+        // The core refuses unknown keys, so this proves the plugin keeps it.
+        $this->assertSame('https://example.com', $config->serverConfig()->issuer);
+    }
+
+    public function testAnInvalidCsrfCookieNameIsRefusedLikeAnyInvalidSetting(): void
+    {
+        foreach (['', 5, ['csrfToken'], 'csrf token', 'csrf;token', 'csrf=token'] as $value) {
+            $config = new PluginConfig(['csrfCookieName' => $value]);
+            try {
+                $config->validatePluginSettings();
+                $this->fail('Refused: ' . json_encode($value));
+            } catch (InvalidArgumentException $e) {
+                $this->assertStringContainsString('OAuthServer.csrfCookieName', $e->getMessage());
+            }
+        }
+    }
 }

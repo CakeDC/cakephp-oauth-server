@@ -44,8 +44,10 @@ Notes:
   authenticators by class name and cakedc/users already has a `Token` authenticator. Loading the plugin's
   `CakeDC/OAuthServer.Token` next to it fails with "The `Token` alias has already been loaded". Use
   `OAuthServerToken` with cakedc/users and `Token` otherwise. They are the same class.
-- The authenticator is added first so a session cookie sent along with a revoked or foreign bearer token
-  cannot make the request run as the session user.
+- The authenticator is added first so a session cookie sent along with a revoked or made up bearer token
+  cannot make the request run as the session user. Keep it first: `OAuthServer::csrfSkip()` skips CSRF for
+  bearer requests of this server without looking the token up, and `bin/cake oauth check` fails when a session,
+  cookie or form authenticator comes before it.
 - If `Auth.Authenticators.OAuthServerToken` is already set, the plugin leaves it alone.
 - Applying the integration never fails, so an invalid setting cannot take your login down. With an invalid
   `OAuthServer.users` (or any other invalid `OAuthServer` setting), or a resource at the host root without

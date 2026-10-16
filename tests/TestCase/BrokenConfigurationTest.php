@@ -87,6 +87,7 @@ class BrokenConfigurationTest extends TestCase
             'a users.resource that is not a string' => ['usersResource'],
             'a services.clock that is not a clock' => ['servicesClock'],
             'an unknown consent key' => ['consent'],
+            'a csrfCookieName that is not a cookie name' => ['csrfCookieName'],
         ];
     }
 
@@ -101,6 +102,7 @@ class BrokenConfigurationTest extends TestCase
             'usersResource' => Configure::write('OAuthServer.users', ['resource' => 5]),
             'servicesClock' => Configure::write('OAuthServer.services', ['clock' => 'not a clock']),
             'consent' => Configure::write('OAuthServer.consent', ['typo' => true]),
+            'csrfCookieName' => Configure::write('OAuthServer.csrfCookieName', ['csrfToken']),
         };
         OAuthServer::reset();
     }
@@ -233,7 +235,7 @@ class BrokenConfigurationTest extends TestCase
     }
 
     #[DataProvider('brokenConfigurations')]
-    public function testCsrfSkipStillSkipsTheClientEndpointsButNoBearerRequestWithACookie(string $how): void
+    public function testCsrfSkipStillSkipsTheClientEndpointsAndBearerRequestsWhileThePathsCanBeRead(string $how): void
     {
         $token = $this->oauthTokenFor(1, ['api'], 'http://localhost/api');
         $this->breakConfiguration($how);
@@ -251,18 +253,22 @@ class BrokenConfigurationTest extends TestCase
         $this->assertTrue($post('/oauth/token', null));
         $this->assertTrue($post('/oauth/revoke', null));
         $this->assertFalse($post('/oauth/authorize', null));
-        $this->assertFalse($post('/api/posts', $token, true));
-        $this->assertStringContainsString('warning: CSRF protection was not skipped', $this->logged());
-        $this->assertStringNotContainsString($token, $this->logged());
+        $this->assertFalse($post('/api/posts', null, true));
 
-        // Without a cookie the token needs no validating, so the request is skipped (the Token authenticator answers
-        // 401) as long as the resources and token paths can be read; otherwise nothing is skipped.
+        // A bearer request needs no validating, with a cookie or without, so it is skipped (the Token authenticator
+        // answers 401) as long as the resources and token paths can be read; otherwise nothing is skipped, and the
+        // reason is logged without the token.
         $readable = !in_array($how, self::UNREADABLE_PATHS, true);
         $this->assertSame($readable, $post('/api/posts', $token));
+        $this->assertSame($readable, $post('/api/posts', $token, true));
         $this->assertSame($readable, $post('/api/posts', null));
+        if (!$readable) {
+            $this->assertStringContainsString('warning: CSRF protection was not skipped', $this->logged());
+        }
+        $this->assertStringNotContainsString($token, $this->logged());
     }
 
-    public function testCsrfSkipBuildsTheServerOnlyForABearerTokenWithACookieWithinTheTokenPaths(): void
+    public function testCsrfSkipNeverBuildsTheServer(): void
     {
         $token = $this->oauthTokenFor(1, ['api'], 'http://localhost/api');
         $this->breakConfiguration('salt');
@@ -273,18 +279,12 @@ class BrokenConfigurationTest extends TestCase
             ]),
         );
 
-        // Outside the token paths the server is never built, so the broken salt leaves no trace.
+        // The server cannot be built with this salt, and nothing needs it: the broken salt leaves no trace.
         $this->assertFalse($post('/account/delete', '/account/delete'));
         $this->assertFalse($post('/mcp/account/delete', '/{tenant}/account/delete'));
-        $this->assertFalse($post('/account/delete', '/account/delete', false));
-        // Inside them, without a cookie, nothing needs validating.
+        $this->assertTrue($post('/api/posts', '/api/**'));
         $this->assertTrue($post('/api/posts', '/api/**', false));
         $this->assertSame('', $this->logged());
-
-        // With a cookie the token has to be validated: the server cannot be built, so nothing is skipped.
-        $this->assertFalse($post('/api/posts', '/api/**'));
-        $this->assertStringContainsString('Security.salt', $this->logged());
-        $this->assertStringNotContainsString($token, $this->logged());
     }
 
     #[DataProvider('brokenConfigurations')]
@@ -292,16 +292,22 @@ class BrokenConfigurationTest extends TestCase
     {
         $this->breakConfiguration($how);
 
-        $this->configRequest(['headers' => ['Authorization' => 'Bearer test_at_' . str_repeat('x', 43)]]);
-        $this->post('/api/me', ['x' => '1']);
+        foreach ([false, true] as $cookie) {
+            if ($cookie) {
+                // A client with a cookie jar, or a browser with a session: the same answer.
+                $this->cookie((string)session_name(), 'a-browser-session');
+            }
+            $this->configRequest(['headers' => ['Authorization' => 'Bearer test_at_' . str_repeat('x', 43)]]);
+            $this->post('/api/me', ['x' => '1']);
 
-        if (in_array($how, self::UNREADABLE_PATHS, true)) {
-            // Where the token works cannot be told, so CSRF protection stays on and refuses it first.
-            $this->assertResponseCode(403);
-            $this->assertResponseContains('Missing or incorrect CSRF cookie type.');
-        } else {
-            $this->assertResponseCode(401);
-            $this->assertHeaderContains('WWW-Authenticate', 'error="invalid_token"');
+            if (in_array($how, self::UNREADABLE_PATHS, true)) {
+                // Where the token works cannot be told, so CSRF protection stays on and refuses it first.
+                $this->assertResponseCode(403);
+                $this->assertResponseContains('Missing or incorrect CSRF cookie type.');
+            } else {
+                $this->assertResponseCode(401);
+                $this->assertHeaderContains('WWW-Authenticate', 'error="invalid_token"');
+            }
         }
     }
 

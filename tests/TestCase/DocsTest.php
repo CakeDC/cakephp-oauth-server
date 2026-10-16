@@ -49,6 +49,7 @@ class DocsTest extends TestCase
                     'userProvider', 'className', 'table', 'finder', 'displayField', 'canAuthorize', 'forClient',
                     'scopes', 'login', 'redirectParam', 'identityAttribute', 'consent', 'layout', 'connections',
                     'enabled', 'rateLimit', 'cache', 'services', 'clock', 'transport', 'dns', 'users.resource', 'users.paths', 'tokenPaths',
+                    'csrfCookieName',
                     // Core settings.
                     'issuer', 'secret', 'resources', 'defaultResource', 'routePrefix', 'tokenPrefix', 'lifetimes',
                     'refreshTokens', 'registration', 'cimd', 'clientCredentials', 'introspection',
@@ -70,7 +71,7 @@ class DocsTest extends TestCase
             'installation.md' => [
                 'OAuthServer::csrfSkip', 'migrations migrate -p CakeDC/OAuthServer', 'CakeDC/OAuthServer.Token',
                 '20261017120000_AddOAuthCodesSubjectIndex.php', self::BETA_INSTALL, '"prefer-stable": true',
-                'no cookie',
+                'csrfCookieName', 'loginUrl',
             ],
             'protecting-apis.md' => [
                 'OAuthServer::token', 'OAuthIdentity', 'CakeDC/OAuthServer.Token', 'resourceMetadataUrl',
@@ -88,12 +89,13 @@ class DocsTest extends TestCase
             ],
             'testing.md' => [
                 'OAuthTestTrait', 'oauthTokenFor', 'withOAuthToken', 'actAsOAuth', 'OAuthServer::reset',
+                'cookie(session_name()',
             ],
-            'mcp.md' => ['mcpTokenValidator', 'cakedc/cakephp-mcp', 'mcp/sdk 0.9', 'resource_metadata'],
+            'mcp.md' => ['mcpTokenValidator', 'cakedc/cakephp-mcp', 'mcp/sdk 0.9', 'resource_metadata', 'cookie jar'],
             'deployment.md' => [
                 'trustProxy', 'setTrustedProxies', '160.79.104.0/21', 'utf8mb4_bin', 'CHAR(36)',
             ],
-            'troubleshooting.md' => ['oauth check', 'OAuthServer::csrfSkip'],
+            'troubleshooting.md' => ['oauth check', 'OAuthServer::csrfSkip', 'csrfCookieName'],
             'index.md' => ['OAuthServer::server', 'OAuthServer::forRequest', 'OAuthServer::reset', 'QuotedName'],
         ];
     }
@@ -172,6 +174,13 @@ class DocsTest extends TestCase
     {
         $this->assertStringNotContainsString("\u{2013}", self::docs());
         $this->assertStringNotContainsString("\u{2013}", $this->changelog());
+    }
+
+    public function testNoPageSaysThatClientsSendNoCookies(): void
+    {
+        // Clients with a cookie jar (httpx in the MCP Python SDK) send back the CSRF cookie, and csrfSkip() allows
+        // for it; a page that promises otherwise sends readers looking in the wrong place.
+        $this->assertStringNotContainsString('send no cookies', self::docs());
     }
 
     public function testChangelogHasTheFirstRelease(): void
