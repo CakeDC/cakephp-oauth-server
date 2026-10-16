@@ -97,4 +97,8 @@ Events (the audit trail) are described in [events](events.md).
 - [ ] Anthropic's egress range `160.79.104.0/21` is not blocked or challenged on the OAuth and MCP paths (it stays subject to the rate limits).
 - [ ] A listener records `OAuthServer.refreshTokenReused` and `OAuthServer.tokenRevoked`.
 - [ ] Revocation is wired to the events that matter to you: password change, account removal, role change.
-- [ ] The database user can only touch the four `oauth_*` tables, and backups are encrypted.
+- [ ] Backups of the `oauth_*` tables are encrypted. (`OrmStorage` runs on the connection of the plugin's tables
+      and the people table is read through your own table, usually the `default` connection, so the database
+      user of the application needs both; only a separate connection for the OAuth tables could narrow it.)
+- [ ] `bin/cake oauth check` has no warning about query logging leaking tokens: with cakedc/users, the
+      one-time login authenticator is the plugin's ([cakedc-users](cakedc-users.md#one-time-login-links)).

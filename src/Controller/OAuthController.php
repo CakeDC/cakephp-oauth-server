@@ -4,13 +4,16 @@ declare(strict_types=1);
 namespace CakeDC\OAuthServer\Controller;
 
 use Cake\Controller\Controller;
+use Cake\Http\Exception\ServiceUnavailableException;
 use Cake\Http\Response;
 use Cake\Routing\Router;
 use CakeDC\OAuth\Server\AuthorizationServer;
+use CakeDC\OAuthServer\Log\CakeLogger;
 use CakeDC\OAuthServer\OAuthServer;
 use Closure;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Server\RequestHandlerInterface;
+use Throwable;
 
 /**
  * Hands every OAuth request to the matching core handler.
@@ -135,8 +138,49 @@ class OAuthController extends Controller
         if (is_object($authorization) && method_exists($authorization, 'skipAuthorization')) {
             $authorization->skipAuthorization();
         }
+        try {
+            $server = OAuthServer::forRequest($this->request);
+        } catch (Throwable $e) {
+            return $this->unavailable($e);
+        }
 
-        return $this->toCakeResponse($pick(OAuthServer::forRequest($this->request))->handle($this->request));
+        return $this->toCakeResponse($pick($server)->handle($this->request));
+    }
+
+    /**
+     * The answer of every endpoint while the `OAuthServer` configuration is invalid: 503, and the reason in the
+     * `oauth` log. The machine endpoints answer JSON; the consent and connections pages raise the exception the
+     * application's error page renders. The rest of the application is not affected.
+     *
+     * @param \Throwable $error Why the server could not be built.
+     * @return \Cake\Http\Response
+     * @throws \Cake\Http\Exception\ServiceUnavailableException On the consent and connections pages.
+     */
+    private function unavailable(Throwable $error): Response
+    {
+        (new CakeLogger())->error(
+            'The OAuth endpoint {path} is unavailable: the OAuth server configuration is invalid. {message}',
+            [
+                'path' => $this->request->getUri()->getPath(),
+                'message' => $error->getMessage(),
+                'exception' => $error,
+            ],
+        );
+        if (in_array($this->request->getParam('action'), ['authorize', 'connections'], true)) {
+            throw new ServiceUnavailableException(
+                __d('oauth_server', 'The authorization service is not available right now. Try again later.'),
+            );
+        }
+
+        return $this->response
+            ->withStatus(503)
+            ->withType('application/json')
+            ->withHeader('Cache-Control', 'no-store')
+            ->withHeader('Pragma', 'no-cache')
+            ->withStringBody((string)json_encode([
+                'error' => 'temporarily_unavailable',
+                'error_description' => 'The authorization server is not available right now.',
+            ]));
     }
 
     /**

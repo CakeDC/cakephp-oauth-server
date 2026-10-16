@@ -16,11 +16,17 @@ this documentation links to them instead of repeating them.
 ## Requirements
 
 - PHP 8.2 or later
-- CakePHP 5.0 or later (CI tests from 5.1.10, the lowest release Composer installs because earlier 5.x releases carry security advisories)
-- `cakephp/authentication` 3.x (your application needs a login that sets the `identity` request attribute)
+- CakePHP 5.1.10 or later
+- `cakephp/authentication` 3.3.6 or later (your application needs a login that sets the `identity` request
+  attribute)
 - `cakephp/migrations` 4 or 5
 - Optional: `cakedc/users` for a ready-made login (see [cakedc-users](docs/cakedc-users.md)), `cakedc/auth`
   for RBAC rules, `cakephp/authorization`
+
+The floors are the oldest releases without known security advisories, which are also the oldest that current
+Composer installs: CakePHP before 5.1.10 and `cakephp/authentication` before 3.3.6 have published advisories,
+one of them an open redirect in the login return flow (`?redirect=`), the very flow the consent page sends people
+through.
 
 ## Five minute start
 

@@ -6,6 +6,7 @@ namespace CakeDC\OAuthServer\Test\TestCase;
 use Cake\TestSuite\TestCase;
 use CakeDC\OAuthServer\Authenticator\OAuthServerTokenAuthenticator;
 use CakeDC\OAuthServer\Authenticator\TokenAuthenticator;
+use CakeDC\OAuthServer\Authenticator\UsersOneTimeTokenAuthenticator;
 use CakeDC\OAuthServer\Config\PluginConfig;
 use CakeDC\OAuthServer\Database\Type\UtcDateTimeType;
 use CakeDC\OAuthServer\Event\CakeEventDispatcher;
@@ -39,7 +40,7 @@ class PublicApiTest extends TestCase
             PluginConfig::class, ServerFactory::class, CakeTemplateRenderer::class, CakeConnectionsRenderer::class,
             CakeConsentRenderer::class, CakeErrorPageRenderer::class, UsersIntegration::class,
             PluginMessagesLoader::class, UtcDateTimeType::class, RbacPermissionsProvider::class,
-            CakeEventDispatcher::class, CakeLogger::class, RequestPaths::class,
+            CakeEventDispatcher::class, CakeLogger::class, RequestPaths::class, UsersOneTimeTokenAuthenticator::class,
         ];
         foreach ($internal as $class) {
             $this->assertStringContainsString('@internal', (string)(new ReflectionClass($class))->getDocComment(), $class);
@@ -56,6 +57,14 @@ class PublicApiTest extends TestCase
         foreach ($public as $class) {
             $this->assertStringNotContainsString('@internal', (string)(new ReflectionClass($class))->getDocComment(), $class);
         }
+    }
+
+    public function testTheResolverOfTheTokenAuthenticatorIsInternal(): void
+    {
+        $this->assertStringContainsString(
+            '@internal',
+            (string)(new ReflectionMethod(TokenAuthenticator::class, 'resolve'))->getDocComment(),
+        );
     }
 
     public function testTwoStaticMethodsAreInternal(): void

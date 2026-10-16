@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace CakeDC\OAuthServer\Test\TestCase\Storage;
 
+use Cake\Log\Engine\ArrayLog;
 use Cake\ORM\Locator\LocatorAwareTrait;
 use CakeDC\OAuth\Server\Grant\Consent;
 use CakeDC\OAuth\Server\Storage\StorageInterface;
@@ -30,6 +31,36 @@ class OrmStorageTest extends StorageContractTestCase
         }
 
         return new OrmStorage();
+    }
+
+    /**
+     * Ids reach storage from the connections form: one that is not shaped like the ids the core generates
+     * (invalid UTF-8 on PostgreSQL makes the query itself fail) matches nothing and never reaches the database.
+     *
+     * @return void
+     */
+    public function testMalformedIdsMatchNothingWithoutAQuery(): void
+    {
+        $storage = $this->createStorage();
+        $client = $this->makeClient();
+        $storage->saveClient($client);
+        $driver = $this->fetchTable('CakeDC/OAuthServer.OauthTokens')->getConnection()->getDriver();
+        $log = new ArrayLog();
+        $driver->setLogger($log);
+        $driver->enableQueryLogging();
+        try {
+            foreach (["\xFF\xFE", 'not-a-uuid', '', strtoupper($client->id) . 'x', $client->id . "\n", "' OR '1'='1"] as $id) {
+                $this->assertNull($storage->findClientById($id), bin2hex($id));
+                $this->assertNull($storage->findTokenById($id), bin2hex($id));
+                $this->assertSame([], $storage->findTokensByFamily($id), bin2hex($id));
+            }
+            $this->assertSame([], $log->read());
+            // Control: a well-formed id is looked up.
+            $this->assertNotNull($storage->findClientById($client->id));
+            $this->assertNotSame([], $log->read());
+        } finally {
+            $driver->disableQueryLogging();
+        }
     }
 
     /**

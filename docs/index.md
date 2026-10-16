@@ -42,10 +42,12 @@ library `cakedc/oauth-server`, whose documentation covers the OAuth side in dept
 ## Public API
 
 Before 1.0 the supported surface is: `OAuthServerPlugin`, `OAuthServer` (except `pageCsp()` and
-`forRequest()`, which the plugin's controller uses), `TokenAuthenticator` and `OAuthServerTokenAuthenticator`,
-`OAuthIdentity`, `OrmStorage`, `OrmUserProvider`, `SessionUserContext`, the Table and Entity classes, the
-commands and `OAuthTestTrait`, plus the configuration keys and events documented here. Everything else
-(`PluginConfig`, `ServerFactory`, the `Cake*Renderer` classes and `CakeTemplateRenderer`, `UsersIntegration`,
-`PluginMessagesLoader`, `UtcDateTimeType`, `RbacPermissionsProvider`, the event dispatcher and the logger) is
-marked `@internal` and may change in any release. `RbacPermissionsProvider` stays referenced by class name in
-`Auth.RbacPolicy.adapter.permissions_provider_class`; that value is configuration, the class itself is not API.
+`forRequest()`, which the plugin's controller uses), `TokenAuthenticator` (except `resolve()`, which
+`oauth check` uses) and `OAuthServerTokenAuthenticator`, `OAuthIdentity`, `OrmStorage`, `OrmUserProvider`,
+`SessionUserContext`, the Table and Entity classes (no entity field is mass assignable and the hashes are hidden;
+pass `accessibleFields` when you patch one), the commands and `OAuthTestTrait`, plus the configuration keys and
+events documented here. Everything else (`PluginConfig`, `ServerFactory`, the `Cake*Renderer` classes and
+`CakeTemplateRenderer`, `UsersIntegration`, `UsersOneTimeTokenAuthenticator`, `PluginMessagesLoader`,
+`UtcDateTimeType`, `RbacPermissionsProvider`, the event dispatcher and the logger) is marked `@internal` and may
+change in any release. `RbacPermissionsProvider` and `CakeDC/OAuthServer.UsersOneTimeToken` stay referenced by
+name in the cakedc/users configuration; those values are configuration, the classes themselves are not API.

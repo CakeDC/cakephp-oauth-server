@@ -12,6 +12,7 @@ use CakeDC\OAuth\Server\Token\ValidatedToken;
 use CakeDC\OAuthServer\Config\PluginConfig;
 use CakeDC\OAuthServer\Http\RequestPaths;
 use CakeDC\OAuthServer\Identity\OAuthIdentity;
+use CakeDC\OAuthServer\Log\CakeLogger;
 use CakeDC\OAuthServer\Server\ServerFactory;
 use Psr\Http\Message\ServerRequestInterface;
 use Throwable;
@@ -76,8 +77,13 @@ final class OAuthServer
      *
      * The consent and connections pages are session pages and are never skipped, with or without a bearer token.
      * Paths are compared after the normalisation the router applies, and a path with `%2F`, an empty segment or
-     * `.` / `..` segments is never skipped. When the configuration cannot be read or the server cannot be built,
-     * nothing is skipped and no error escapes.
+     * `.` / `..` segments is never skipped.
+     *
+     * It never throws. The client endpoints are found where the plugin connected them, so they are skipped with
+     * any configuration, a broken one included (they then answer 503). The server is built only for a request
+     * that carries a bearer token with this server's prefix within the token paths, because only that token needs
+     * validating; when the configuration cannot be read, the server cannot be built or the lookup fails, that
+     * request is not skipped and a warning goes to the `oauth` log (never the token).
      *
      * @param \Psr\Http\Message\ServerRequestInterface $request The request.
      * @param list<string>|null $paths Path prefixes where a bearer token of any declared resource is accepted, when
@@ -88,14 +94,19 @@ final class OAuthServer
     {
         try {
             return self::skipsCsrf($request, $paths);
-        } catch (Throwable) {
-            // A broken configuration, a server that cannot be built or a failing lookup never skips the check.
+        } catch (Throwable $e) {
+            // Only the bearer branch can fail, and it never skips the check then.
+            (new CakeLogger())->warning(
+                'CSRF protection was not skipped for a bearer request to {path}: {message}',
+                ['path' => $request->getUri()->getPath(), 'message' => $e->getMessage(), 'exception' => $e],
+            );
+
             return false;
         }
     }
 
     /**
-     * csrfSkip(), allowed to throw.
+     * csrfSkip(), allowed to throw in its bearer branch.
      *
      * @param \Psr\Http\Message\ServerRequestInterface $request The request.
      * @param list<string>|null $paths Path prefixes, or null for the configured ones.
@@ -104,7 +115,8 @@ final class OAuthServer
     private static function skipsCsrf(ServerRequestInterface $request, ?array $paths): bool
     {
         $config = PluginConfig::fromConfigure();
-        $prefix = $config->routePrefix();
+        // Where the routes are, whatever the rest of the configuration says.
+        $prefix = $config->lenientRouting()['prefix'];
         $path = RequestPaths::normalize($request->getUri()->getPath());
         if ($path === null) {
             return false;
@@ -123,8 +135,8 @@ final class OAuthServer
         if ($token === null) {
             return false;
         }
-        $own = $config->tokenPrefix();
-        if (!str_starts_with($token, $own . '_at_') && !str_starts_with($token, $own . '_pat_')) {
+        $own = $config->configuredTokenPrefix();
+        if ($own === null || !str_starts_with($token, $own . '_at_') && !str_starts_with($token, $own . '_pat_')) {
             return false;
         }
         if ($paths !== null) {
@@ -141,10 +153,18 @@ final class OAuthServer
         }
         // Only now is the server needed: a request without such a token never builds it.
         $validator = self::server()->tokenValidator();
-        foreach ($resources as $resource) {
-            if ($validator->validate($token, $resource, false) instanceof ValidatedToken) {
-                return true;
+        try {
+            foreach ($resources as $resource) {
+                if ($validator->validate($token, $resource, false) instanceof ValidatedToken) {
+                    return true;
+                }
             }
+        } catch (Throwable $e) {
+            // A failing lookup: its message could quote the query, so the log gets the class and place only.
+            (new CakeLogger())->warning(
+                'CSRF protection was not skipped for a bearer request to {path}: the token could not be validated.',
+                ['path' => $request->getUri()->getPath(), 'exception' => $e],
+            );
         }
 
         return false;
@@ -215,6 +235,9 @@ final class OAuthServer
      * RBAC rules (cakedc/auth) that let every OAuth endpoint through; the endpoints decide access
      * themselves (login for the consent and connections pages, client authentication for the rest).
      *
+     * The rule lists the endpoint actions one by one, so an action added to the controller later does not
+     * inherit the bypass by accident.
+     *
      * @return list<array<string, mixed>>
      */
     public static function rbacPermissions(): array
@@ -224,7 +247,7 @@ final class OAuthServer
                 'role' => '*',
                 'plugin' => 'CakeDC/OAuthServer',
                 'controller' => 'OAuth',
-                'action' => '*',
+                'action' => ['metadata', 'authorize', 'token', 'register', 'revoke', 'introspect', 'connections'],
                 'bypassAuth' => true,
             ],
         ];

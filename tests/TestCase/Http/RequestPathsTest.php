@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace CakeDC\OAuthServer\Test\TestCase\Http;
 
 use Cake\Http\ServerRequest;
+use Cake\Routing\Route\Route;
 use Cake\TestSuite\TestCase;
 use CakeDC\OAuthServer\Http\RequestPaths;
 use CakeDC\OAuthServer\Test\Support\Routed;
@@ -86,6 +87,20 @@ class RequestPathsTest extends TestCase
         // The base directory comes first.
         $this->assertSame('/sub/api', $route('/api/**', '/sub'));
         $this->assertSame('/sub', $route('/{slug}', '/sub'));
+    }
+
+    public function testRoutePathOfATemplateWithoutALeadingSlashIsTheRoot(): void
+    {
+        // Cake's builders always add the slash; a Route built by hand need not. Its static part has no slash at
+        // all, so no complete segment is fixed: the root, never the first character of the template.
+        $route = fn(string $template, string $base = ''): ?string => RequestPaths::routePath(
+            (new ServerRequest(['url' => '/x']))->withAttribute('route', new Route($template))->withAttribute('base', $base),
+        );
+
+        $this->assertSame('/', $route('api-{version}'));
+        $this->assertSame('/', $route('a{x}/account/delete'));
+        $this->assertSame('/', $route('{slug}'));
+        $this->assertSame('/sub', $route('api-{version}', '/sub'));
     }
 
     public function testRoutePathIsNullBeforeRouting(): void

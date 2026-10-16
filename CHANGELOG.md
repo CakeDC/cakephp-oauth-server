@@ -4,12 +4,29 @@
 
 First release. An OAuth 2.1 authorization server for CakePHP 5 on top of cakedc/oauth-server.
 
+- Requires CakePHP 5.1.10 or later and `cakephp/authentication` 3.3.6 or later: earlier releases have published
+  security advisories (one of them an open redirect through the login's `redirect` parameter, the flow the
+  consent page uses), and current Composer refuses to install them.
+- A broken `OAuthServer` configuration never takes the application down, on the web or the command line: the
+  application's pages (the login included), `bin/cake` and migrations keep working, the plugin's routes are still
+  connected (at the configured prefix and issuer when each is valid on its own) and answer 503 (JSON on the
+  metadata, token, register, revoke and introspect endpoints; the application's error page on the consent and
+  connections pages), a bearer token of this server gets 401, and each refusal logs the reason on the `oauth`
+  scope. Any invalid setting counts, a wrong type included (a resource declared with a string used to break
+  `bin/cake` with a `TypeError`), and so do invalid `users` and `tokenPaths` values. `oauth check` reports it.
+- The Token authenticator reads no configuration when it is built: the resource, the paths and the server are
+  resolved on the first request with a bearer token of this server's prefix, and a failure there (an undeclared
+  `resource`, a root resource without `paths`, an invalid `paths`, a broken configuration) refuses that token with
+  401 and logs why, instead of throwing on every request. `TokenAuthenticator::resolve()` (internal) is what
+  `oauth check` uses to report it.
 - `OAuthServer::csrfSkip()` skips CSRF for the client endpoints and for requests with a bearer token of this
   server that validates (the core's validator, without recording a use) on the routes of its resource
   (`OAuthServer.tokenPaths` or the `$paths` argument override the paths). A made up, expired or revoked token
-  with the right prefix gets the normal CSRF check, a bearer request that was not routed yet is never skipped,
-  and `csrfSkip()` never throws: it skips nothing when the configuration cannot be read or the server cannot be
-  built.
+  with the right prefix gets the normal CSRF check, and a bearer request that was not routed yet is never
+  skipped. `csrfSkip()` never throws. The client endpoints are skipped with any configuration, a broken one
+  included, because they are found where the plugin connected them; only a bearer request within the token
+  paths builds the server, and when that fails (or the configuration cannot be read) the request is not skipped
+  and a warning goes to the `oauth` log, never the token.
 - The Token authenticator has a `paths` option (default: the path of its resource) and refuses, with 401, a
   request that carries this server's token anywhere else. Both the request path and the static part of the
   template of the route that matched it must be within `paths`, so a route that starts with a placeholder
@@ -18,10 +35,36 @@ First release. An OAuth 2.1 authorization server for CakePHP 5 on top of cakedc/
   static prefix within its paths.
 - Subdirectory installs: the login redirect of the connections page carries the base path once.
 - People tables keyed by a column other than `id` work: the identity reports the key as its identifier.
-- An invalid `OAuthServer.users` setting no longer breaks `bin/cake` with cakedc/users; `oauth check` reports it.
+- With cakedc/users, applying the integration never fails: with an invalid `OAuthServer.users` setting, or a
+  resource at the host root without paths, the Token authenticator is still registered first and refuses every
+  token of this server, and `oauth check` fails on the `Users integration` line.
+- With cakedc/users, cakedc/auth's one-time login authenticator (`CakeDC/Auth.OneTimeToken`) is replaced by
+  `CakeDC/OAuthServer.UsersOneTimeToken`, which does not read the `token` parameter on the plugin's routes, so a
+  refresh token sent to `/oauth/revoke` or `/oauth/introspect` is never looked up in the users table nor written
+  to the query log. `oauth check` warns when another class is configured or `CakeDC/Users` is loaded after the
+  plugin.
+- `OAuthServer::rbacPermissions()` lists the controller's actions instead of `*`, so a future action does not
+  inherit the bypass.
 - `oauth check` also warns about a missing CSRF middleware and a Session authenticator before the Token one,
   checks that a string login URL routes, and no longer accuses subdirectory installs of an `App.base` mismatch
-  when the base is detected at runtime.
+  when the base is detected at runtime. It fails when the CSRF callback also skips session routes (it probes the
+  consent and connections pages, `/` and the login), recognises `SessionCsrfProtectionMiddleware`, warns when the
+  CSRF or authentication middleware runs before `RoutingMiddleware` (a new `Middleware` line), fails when another
+  route takes `<prefix>/token` (a new `Routes` line), warns when the rate limit cache is an `Array` or `Null`
+  engine, fails when a Token authenticator would refuse every token, inspects the connection of the plugin's
+  tables instead of `default`, and checks every column and unique key of the migration instead of one column.
+- Lookups by id (`findTokenById()`, `findTokensByFamily()`, `findClientById()`) answer nothing without a query
+  for an id that is not shaped like a UUID, so a malformed `family_id` or `token_id` on the connections page
+  (invalid UTF-8 failed the query on PostgreSQL with a 500 and the SQL in the log) is simply ignored.
+- The entities are closed to mass assignment (`'*' => false`; `OrmStorage` passes `accessibleFields`) and hide
+  `secret_hash`, `code_hash` and `token_hash` from `toArray()` and JSON.
+- `RequestPaths::routePath()` treats a hand-built route template without a leading slash as the root instead of
+  its first character.
+- PHPStan runs with a bootstrap of its own, so an analysis no longer runs the migrations nor leaves a SQLite file
+  in `tests/test_app/tmp`.
+- Documentation: the cakedc/users plugin order and why, the database user note of the security checklist, the
+  output of `oauth client add`, the nginx PHP location and why the subdirectory rewrite works, test tokens having
+  no client, and application CSP middleware on the plugin's pages.
 - Deployment docs: set `OAuthServer.issuer` or `App.fullBaseUrl` explicitly; the skeleton otherwise fills it
   from the `Host` header.
 - Public API boundary: `PluginConfig`, `ServerFactory`, the template renderers, `UsersIntegration`,

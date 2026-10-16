@@ -3,13 +3,16 @@ declare(strict_types=1);
 
 namespace CakeDC\OAuthServer\Test\TestCase\Command;
 
+use Cake\Cache\Cache;
 use Cake\Console\ConsoleIo;
 use Cake\Console\TestSuite\ConsoleIntegrationTestTrait;
 use Cake\Console\TestSuite\StubConsoleOutput;
 use Cake\Core\Configure;
+use Cake\Database\Driver\Mysql;
 use Cake\Database\Driver\Postgres;
 use Cake\Datasource\ConnectionManager;
 use Cake\Log\Log;
+use Cake\Routing\Router;
 use Cake\TestSuite\TestCase;
 use Cake\Utility\Security;
 use CakeDC\OAuth\Server\Grant\Consent;
@@ -306,6 +309,96 @@ class CommandsTest extends TestCase
         return implode("\n", $out->messages());
     }
 
+    public function testCheckFailsWhenTheCsrfCallbackSkipsEverything(): void
+    {
+        $output = $this->checkApplication('CakeDC\\OAuthServer\\Test\\Support\\CheckApp\\SkipAll');
+
+        $this->assertStringContainsString('[FAIL] CSRF', $output);
+        $this->assertStringContainsString('/oauth/authorize', $output);
+    }
+
+    public function testCheckRecognisesTheSessionCsrfMiddleware(): void
+    {
+        $output = $this->checkApplication('CakeDC\\OAuthServer\\Test\\Support\\CheckApp\\SessionCsrf');
+
+        $this->assertStringContainsString(
+            '[PASS] CSRF: the token, register, revoke and introspect endpoints are skipped',
+            $output,
+        );
+    }
+
+    public function testCheckWarnsWhenCsrfOrAuthenticationRunsBeforeRouting(): void
+    {
+        $output = $this->checkApplication('CakeDC\\OAuthServer\\Test\\Support\\CheckApp\\BeforeRouting');
+
+        $this->assertStringContainsString('[WARN] Middleware', $output);
+        $this->assertStringContainsString('CsrfProtectionMiddleware runs before RoutingMiddleware', $output);
+        $this->assertStringContainsString('AuthenticationMiddleware runs before RoutingMiddleware', $output);
+    }
+
+    public function testCheckPassesTheMiddlewareOrderAndTheRoutesOfTheTestApplication(): void
+    {
+        $this->exec('oauth check');
+
+        $this->assertOutputContains('[PASS] Middleware');
+        $this->assertOutputContains('[PASS] Routes: /oauth/token reaches the plugin');
+    }
+
+    public function testCheckFailsWhenAnotherRouteTakesTheTokenEndpoint(): void
+    {
+        Router::reload();
+        Router::createRouteBuilder('/')->connect('/oauth/token', ['controller' => 'Pages', 'action' => 'login']);
+        $out = new StubConsoleOutput();
+        try {
+            (new OAuthCheckCommand())->run([], new ConsoleIo($out, new StubConsoleOutput()));
+        } finally {
+            Router::reload();
+        }
+
+        $this->assertStringContainsString('[FAIL] Routes: /oauth/token', implode("\n", $out->messages()));
+    }
+
+    public function testCheckInspectsTheConnectionOfThePluginTables(): void
+    {
+        // The application keeps the OAuth tables on another connection than `default`.
+        ConnectionManager::setConfig('oauth_check_empty', ['url' => 'sqlite:///:memory:']);
+        $tables = [];
+        foreach (['OauthClients', 'OauthAuthorizationCodes', 'OauthTokens', 'OauthConsents'] as $name) {
+            $tables[$name] = $this->getTableLocator()->get('CakeDC/OAuthServer.' . $name);
+            $tables[$name]->setConnection(ConnectionManager::get('oauth_check_empty'));
+        }
+        try {
+            $this->exec('oauth check');
+        } finally {
+            foreach ($tables as $table) {
+                $table->setConnection(ConnectionManager::get('default'));
+            }
+            ConnectionManager::drop('oauth_check_empty');
+        }
+
+        $this->assertExitError();
+        $this->assertOutputContains('[FAIL] Tables: missing oauth_clients');
+        $this->assertOutputContains('connection "oauth_check_empty"');
+    }
+
+    public function testCheckFailsWhenAUniqueIndexIsMissing(): void
+    {
+        $connection = ConnectionManager::get('default');
+        $driver = $connection->getDriver();
+        $connection->execute($driver instanceof Mysql
+            ? 'DROP INDEX oauth_tokens_token_hash ON oauth_tokens'
+            : 'DROP INDEX oauth_tokens_token_hash');
+        try {
+            $this->exec('oauth check');
+        } finally {
+            $connection->execute('CREATE UNIQUE INDEX oauth_tokens_token_hash ON oauth_tokens (token_hash)');
+        }
+
+        $this->assertExitError();
+        $this->assertOutputContains('[FAIL] Tables');
+        $this->assertOutputContains('oauth_tokens (token_hash)');
+    }
+
     public function testCheckWarnsWithoutCsrfMiddleware(): void
     {
         $output = $this->checkApplication('CakeDC\\OAuthServer\\Test\\Support\\CheckApp\\NoCsrf');
@@ -402,12 +495,35 @@ class CommandsTest extends TestCase
             $this->markTestSkipped('ext-curl is not installed.');
         }
         Configure::write('OAuthServer.cimd.enabled', true);
-        Configure::write('OAuthServer.rateLimit.cache', 'default');
-
-        $this->exec('oauth check');
+        Configure::write('OAuthServer.rateLimit.cache', 'oauth_check_file');
+        Cache::setConfig('oauth_check_file', ['engine' => 'File', 'path' => CACHE . 'oauth_check' . DS]);
+        try {
+            $this->exec('oauth check');
+        } finally {
+            Cache::drop('oauth_check_file');
+        }
 
         $this->assertOutputContains('[PASS] Client metadata documents');
-        $this->assertOutputContains('[PASS] Rate limiting');
+        $this->assertOutputContains('[PASS] Rate limiting: cache "oauth_check_file"');
+    }
+
+    public function testCheckWarnsWhenTheRateLimitCacheKeepsNothingBetweenRequests(): void
+    {
+        Configure::write('OAuthServer.rateLimit.cache', 'default');
+        Cache::setConfig('oauth_check_null', ['engine' => 'Null']);
+        try {
+            // The test bootstrap's default cache is an Array engine: it forgets everything after the request.
+            $this->exec('oauth check');
+            $this->assertOutputContains('[WARN] Rate limiting');
+            $this->assertOutputContains('ArrayEngine');
+
+            Configure::write('OAuthServer.rateLimit.cache', 'oauth_check_null');
+            $this->exec('oauth check');
+            $this->assertOutputContains('[WARN] Rate limiting');
+            $this->assertOutputContains('NullEngine');
+        } finally {
+            Cache::drop('oauth_check_null');
+        }
     }
 
     public function testCheckFailsOnAMissingRateLimitCacheConfiguration(): void

@@ -58,6 +58,12 @@ $validator = OAuthServer::server()->mcpTokenValidator('https://example.com/mcp')
 $middleware = new AuthorizationMiddleware($validator, $metadata, $policy, $responseFactory, $streamFactory);
 ```
 
+Build the validator where the MCP request is handled (the controller action of your MCP route), not in
+`Application::bootstrap()` or `Application::middleware()`. `OAuthServer::server()` throws while the
+`OAuthServer` configuration is invalid; called per MCP request, that fails the MCP route alone, while called at
+boot it would take every page down, which the plugin otherwise prevents
+([an invalid configuration](configuration.md#an-invalid-configuration)).
+
 `mcpTokenValidator()` throws `InvalidArgumentException` when the resource is not declared and
 `LogicException` when `mcp/sdk` is missing. `$metadata` (`ProtectedResourceMetadata`), `$policy`
 (`ScopePolicy`) and the other middleware of the transport are built as in the core's example. The SDK is

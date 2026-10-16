@@ -52,6 +52,9 @@ final class OrmStorage implements StorageInterface
      */
     public function findClientById(string $id): ?Client
     {
+        if (!self::isId($id)) {
+            return null;
+        }
         $row = $this->clients()->find()->where(['id' => $id])->first();
 
         return $row instanceof EntityInterface ? $this->client($row) : null;
@@ -233,6 +236,9 @@ final class OrmStorage implements StorageInterface
      */
     public function findTokenById(string $id): ?Token
     {
+        if (!self::isId($id)) {
+            return null;
+        }
         $row = $this->tokens()->find()->where(['id' => $id])->first();
 
         return $row instanceof EntityInterface ? $this->token($row) : null;
@@ -288,6 +294,9 @@ final class OrmStorage implements StorageInterface
      */
     public function findTokensByFamily(string $familyId): array
     {
+        if (!self::isId($familyId)) {
+            return [];
+        }
         $rows = $this->tokens()->find()
             ->where(['family_id' => $familyId])
             ->orderBy(['created' => 'ASC', 'id' => 'ASC']);
@@ -596,6 +605,19 @@ final class OrmStorage implements StorageInterface
     private function consents(): Table
     {
         return $this->fetchTable('CakeDC/OAuthServer.OauthConsents');
+    }
+
+    /**
+     * Whether $id has the shape of the ids the core generates (a UUID). The lookups by id take ids from request
+     * input (the connections form), and anything else matches no row: it is answered without a query, so a
+     * malformed value (invalid UTF-8 fails the query on PostgreSQL) never reaches the database or its errors.
+     *
+     * @param string $id The id.
+     * @return bool
+     */
+    private static function isId(string $id): bool
+    {
+        return preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\z/i', $id) === 1;
     }
 
     /**

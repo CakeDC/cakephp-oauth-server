@@ -79,8 +79,10 @@ final class RequestPaths
         $static = $route->staticPath();
         $rest = substr($route->template, strlen($static));
         if ($rest !== '' && !str_ends_with($static, '/') && !str_starts_with($rest, '/')) {
-            // The static part stops inside a segment, so that segment is not fixed.
-            $static = substr($static, 0, (int)strrpos($static, '/') + 1);
+            // The static part stops inside a segment, so that segment is not fixed. A template with no slash before
+            // it (a Route built by hand) fixes no segment at all: the root.
+            $slash = strrpos($static, '/');
+            $static = $slash === false ? '/' : substr($static, 0, $slash + 1);
         }
         $base = $request->getAttribute('base');
 

@@ -4,10 +4,15 @@ declare(strict_types=1);
 namespace CakeDC\OAuthServer\Test\TestCase\Authenticator;
 
 use Authentication\Authenticator\AuthenticationRequiredException;
+use Authentication\Authenticator\Result;
+use Authentication\Authenticator\ResultInterface;
 use Authentication\Identifier\IdentifierCollection;
 use Cake\Core\Configure;
+use Cake\Log\Engine\ArrayLog;
+use Cake\Log\Log;
 use Cake\TestSuite\IntegrationTestTrait;
 use Cake\TestSuite\TestCase;
+use Cake\Utility\Security;
 use CakeDC\OAuth\Server\Grant\Pkce;
 use CakeDC\OAuth\Server\Support\Time;
 use CakeDC\OAuthServer\Authenticator\TokenAuthenticator;
@@ -131,11 +136,55 @@ class TokenAuthenticatorTest extends TestCase
         $this->assertResponseCode(401);
     }
 
-    public function testAnUndeclaredResourceFailsWhenTheAuthenticatorIsBuilt(): void
+    public function testAnUndeclaredResourceRefusesTheTokensOfThisServer(): void
     {
-        $this->expectException(InvalidArgumentException::class);
+        // Building the authenticator reads no configuration: a mistake must not break every page.
+        $authenticator = new TokenAuthenticator(new IdentifierCollection(), ['resource' => 'http://localhost/nope']);
+        $request = Routed::request('/nope/x', '/nope/**');
 
-        new TokenAuthenticator(new IdentifierCollection(), ['resource' => 'http://localhost/nope']);
+        $this->assertSame(Result::FAILURE_CREDENTIALS_MISSING, $authenticator->authenticate($request)->getStatus());
+        $result = $authenticator->authenticate(
+            $request->withHeader('Authorization', 'Bearer ' . $this->personalToken()),
+        );
+        $this->assertSame(Result::FAILURE_CREDENTIALS_INVALID, $result->getStatus());
+        try {
+            $authenticator->resolve();
+            $this->fail('An undeclared resource must be reported.');
+        } catch (InvalidArgumentException $e) {
+            $this->assertStringContainsString('not declared in OAuthServer.resources', $e->getMessage());
+        }
+    }
+
+    public function testTheServerIsBuiltOnlyForATokenOfThisServer(): void
+    {
+        $token = $this->personalToken();
+        $salt = Security::getSalt();
+        Security::setSalt('short');
+        OAuthServer::reset();
+        Log::setConfig('oauth_capture', ['className' => ArrayLog::class, 'scopes' => ['oauth']]);
+        try {
+            $authenticator = new TokenAuthenticator(new IdentifierCollection(), ['resource' => 'http://localhost/api']);
+            $at = fn(?string $header): ResultInterface => $authenticator->authenticate(
+                $header === null
+                    ? Routed::request('/api/me', '/api/me')
+                    : Routed::request('/api/me', '/api/me')->withHeader('Authorization', $header),
+            );
+            $this->assertSame(Result::FAILURE_CREDENTIALS_MISSING, $at(null)->getStatus());
+            $this->assertSame(Result::FAILURE_CREDENTIALS_MISSING, $at('Bearer eyJhbGciOiJIUzI1NiJ9.e30.c2ln')->getStatus());
+            $engine = Log::engine('oauth_capture');
+            $this->assertInstanceOf(ArrayLog::class, $engine);
+            $this->assertSame([], $engine->read());
+
+            // The server cannot be built for this token: refused, never passed on, and the reason is logged.
+            $result = $at('Bearer ' . $token);
+            $this->assertSame(Result::FAILURE_CREDENTIALS_INVALID, $result->getStatus());
+            $this->assertStringContainsString('Security.salt', implode("\n", $engine->read()));
+            $this->assertStringNotContainsString($token, implode("\n", $engine->read()));
+        } finally {
+            Security::setSalt($salt);
+            Log::drop('oauth_capture');
+            OAuthServer::reset();
+        }
     }
 
     public function testTheChallengeIsUncacheableJson(): void

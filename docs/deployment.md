@@ -93,6 +93,12 @@ location = /.well-known/oauth-authorization-server/app {
 }
 ```
 
+Why it works: the `rewrite` changes the URI nginx uses to pick a location (so `/app`'s location and its front
+controller handle it), but `REQUEST_URI`, which Cake reads, keeps the original
+`/.well-known/oauth-authorization-server/app`. Cake strips its base directory (`/app`) from the request path only
+when the path starts with it, so the router sees `/.well-known/oauth-authorization-server/app`, exactly the route
+the plugin connected.
+
 The endpoints keep the prefix inside the application: `https://example.com/app/oauth/token`.
 
 For a root install nothing is needed: the issuer is `App.fullBaseUrl` and the route is
@@ -122,12 +128,18 @@ server {
     }
 
     location ~ \.php$ {
+        # Only real files: never hand PHP a path like /uploads/x.jpg/y.php that the front controller did not ask for.
+        try_files $uri =404;
         include fastcgi_params;
         fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
         fastcgi_pass unix:/run/php/php-fpm.sock;
     }
 }
 ```
+
+The `try_files $uri =404;` line in the PHP location matters: without it nginx passes any URL ending in `.php`
+to PHP-FPM, whether or not that file exists. Fixing `SCRIPT_FILENAME` to `$document_root/index.php` there, as
+the core's documentation does, is the other safe choice.
 
 nginx passes the `Authorization` header to PHP-FPM. Do not add CORS `add_header` lines for `/oauth/` or
 `/.well-known/`: the handlers already send them, and a duplicated `Access-Control-Allow-Origin` makes
@@ -142,7 +154,11 @@ browsers reject the response.
   accent sensitively (user `Alice` is not `alice`). `utf8mb4_bin` is a PAD SPACE collation, so two subjects
   that differ only by trailing spaces compare equal: do not create such ids. `oauth check` fails when a
   column has another collation.
-- **Ids.** Ids are `CHAR(36)`, never native UUID columns, on every database.
+- **Ids.** Ids are `CHAR(36)`, never native UUID columns, on every database. A lookup by an id that is not
+  shaped like one (the connections form posts them) matches nothing without a query, so invalid UTF-8 cannot
+  turn into a database error on PostgreSQL.
+- **Connection.** The plugin's tables use the connection their ORM tables are configured with (`default`
+  unless you change it); `oauth check` inspects that connection.
 - **Transactions.** Never run the OAuth endpoints inside a request-wide database transaction (a middleware
   that wraps every request in `BEGIN ... COMMIT`). A rollback after an error could undo tokens already
   handed out, and checks after an atomic update could read a stale snapshot. Exclude the OAuth routes from

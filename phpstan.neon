@@ -5,4 +5,4 @@ parameters:
         # Analyses OAuthTestTrait, which PHPStan only checks through a class using it.
         - tests/TestCase/TestSuite/OAuthTestTraitTest.php
     bootstrapFiles:
-        - tests/bootstrap.php
+        - tests/phpstan_bootstrap.php

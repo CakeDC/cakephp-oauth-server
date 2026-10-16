@@ -6,7 +6,11 @@ namespace CakeDC\OAuthServer\Command;
 use Authentication\AuthenticationService;
 use Authentication\AuthenticationServiceProviderInterface;
 use Authentication\Authenticator\SessionAuthenticator;
+use Authentication\Identifier\IdentifierCollection;
+use Authentication\Middleware\AuthenticationMiddleware;
 use Cake\Cache\Cache;
+use Cake\Cache\Engine\ArrayEngine;
+use Cake\Cache\Engine\NullEngine;
 use Cake\Command\Command;
 use Cake\Console\Arguments;
 use Cake\Console\ConsoleIo;
@@ -14,17 +18,17 @@ use Cake\Core\App;
 use Cake\Core\Configure;
 use Cake\Core\Exception\CakeException;
 use Cake\Core\Plugin;
-use Cake\Database\Connection;
 use Cake\Database\Driver\Mysql;
-use Cake\Datasource\ConnectionManager;
 use Cake\Http\BaseApplication;
 use Cake\Http\Middleware\CsrfProtectionMiddleware;
+use Cake\Http\Middleware\SessionCsrfProtectionMiddleware;
 use Cake\Http\MiddlewareQueue;
 use Cake\Http\ServerRequest;
 use Cake\Log\Engine\BaseLog;
 use Cake\Log\Log;
 use Cake\ORM\Locator\LocatorAwareTrait;
 use Cake\Routing\Exception\MissingRouteException;
+use Cake\Routing\Middleware\RoutingMiddleware;
 use Cake\Routing\Router;
 use Cake\Utility\Inflector;
 use Cake\Utility\Security;
@@ -33,6 +37,7 @@ use CakeDC\OAuthServer\Authenticator\TokenAuthenticator;
 use CakeDC\OAuthServer\Config\PluginConfig;
 use CakeDC\OAuthServer\Identity\OrmUserProvider;
 use CakeDC\OAuthServer\Integration\UsersIntegration;
+use ReflectionClass;
 use ReflectionProperty;
 use Throwable;
 
@@ -45,7 +50,56 @@ class OAuthCheckCommand extends Command
 {
     use LocatorAwareTrait;
 
-    private const TABLES = ['oauth_clients', 'oauth_authorization_codes', 'oauth_tokens', 'oauth_consents'];
+    /**
+     * The columns of each table, as the plugin's migrations create them.
+     */
+    private const COLUMNS = [
+        'oauth_clients' => [
+            'id', 'client_id', 'client_id_hash', 'type', 'application_type', 'name', 'client_uri', 'logo_uri',
+            'redirect_uris', 'grant_types', 'scopes', 'token_endpoint_auth_method', 'secret_hash',
+            'allow_introspection', 'metadata', 'metadata_fetched_at', 'metadata_expires_at', 'last_used_at',
+            'revoked_at', 'created', 'modified',
+        ],
+        'oauth_authorization_codes' => [
+            'id', 'code_hash', 'oauth_client_id', 'subject', 'redirect_uri', 'resource', 'scopes', 'code_challenge',
+            'family_id', 'expires_at', 'used_at', 'created',
+        ],
+        'oauth_tokens' => [
+            'id', 'token_hash', 'type', 'family_id', 'parent_id', 'oauth_client_id', 'subject', 'subject_type',
+            'resource', 'scopes', 'name', 'expires_at', 'used_at', 'revoked_at', 'last_used_at', 'family_started_at',
+            'created', 'modified',
+        ],
+        'oauth_consents' => [
+            'id', 'subject', 'oauth_client_id', 'resource', 'resource_hash', 'scopes', 'created', 'modified',
+        ],
+    ];
+
+    /**
+     * The unique keys each table needs: lookups by hash and the one consent per person, client and resource.
+     */
+    private const UNIQUE = [
+        'oauth_clients' => [['client_id_hash']],
+        'oauth_authorization_codes' => [['code_hash']],
+        'oauth_tokens' => [['token_hash']],
+        'oauth_consents' => [['subject', 'oauth_client_id', 'resource_hash']],
+    ];
+
+    /**
+     * The ORM tables of the four database tables.
+     */
+    private const TABLE_CLASSES = [
+        'oauth_clients' => 'CakeDC/OAuthServer.OauthClients',
+        'oauth_authorization_codes' => 'CakeDC/OAuthServer.OauthAuthorizationCodes',
+        'oauth_tokens' => 'CakeDC/OAuthServer.OauthTokens',
+        'oauth_consents' => 'CakeDC/OAuthServer.OauthConsents',
+    ];
+
+    /**
+     * The middleware of the application, built once per run, or why it could not be inspected.
+     *
+     * @var list<object>|string|null
+     */
+    private array|string|null $middleware = null;
 
     private const MIN_SECRET_LENGTH = 32;
 
@@ -124,14 +178,18 @@ class OAuthCheckCommand extends Command
                 }
                 $paths = $config->usersPaths();
                 $resource = $config->usersResource();
-
-                return ['pass', sprintf(
+                $message = sprintf(
                     'the Token authenticator validates %s below %s',
                     $resource ?? 'the default resource',
                     $paths === null ? 'the path of its resource' : implode(', ', $paths),
-                )];
+                );
+                $oneTimeToken = UsersIntegration::oneTimeTokenWarning();
+
+                return $oneTimeToken === null ? ['pass', $message] : ['warn', $message . '; but ' . $oneTimeToken];
             },
             'Login URL' => fn(): array => $this->loginUrl($config),
+            'Routes' => fn(): array => $this->routes($config),
+            'Middleware' => fn(): array => $this->middlewareOrder(),
             'CSRF' => fn(): array => $this->csrf($config),
             'Authenticators' => fn(): array => $this->authenticators(),
             'RBAC' => fn(): array => Plugin::isLoaded('CakeDC/Users')
@@ -142,10 +200,14 @@ class OAuthCheckCommand extends Command
                 if ($cache === null) {
                     return ['warn', 'disabled ("rateLimit.cache" is null); the token endpoints are not throttled'];
                 }
+                if (Cache::getConfig($cache) === null) {
+                    return ['fail', sprintf('the cache configuration "%s" does not exist', $cache)];
+                }
+                $forgetful = self::forgetfulCache($cache);
 
-                return Cache::getConfig($cache) === null
-                    ? ['fail', sprintf('the cache configuration "%s" does not exist', $cache)]
-                    : ['pass', sprintf('cache "%s"', $cache)];
+                return $forgetful === null
+                    ? ['pass', sprintf('cache "%s"', $cache)]
+                    : ['warn', $forgetful . ', so nothing is throttled; use a cache all PHP processes share'];
             },
             'Client metadata documents' => function () use ($config): array {
                 if (!$config->serverConfig()->cimdEnabled) {
@@ -154,14 +216,18 @@ class OAuthCheckCommand extends Command
                 if (!extension_loaded('curl')) {
                     return ['fail', 'enabled but ext-curl is not installed'];
                 }
-                if ($config->rateLimitCache() === null) {
+                $cache = $config->rateLimitCache();
+                if ($cache === null) {
                     return [
                         'warn',
                         'enabled, but "rateLimit.cache" is null: there is no fetch budget and no negative cache',
                     ];
                 }
+                $forgetful = Cache::getConfig($cache) === null ? null : self::forgetfulCache($cache);
 
-                return ['pass', 'enabled'];
+                return $forgetful === null
+                    ? ['pass', 'enabled']
+                    : ['warn', 'enabled, but ' . $forgetful . ': there is no fetch budget and no negative cache'];
             },
             'Logging' => fn(): array => $this->logging(),
         ];
@@ -239,51 +305,100 @@ class OAuthCheckCommand extends Command
     }
 
     /**
-     * The four tables, the family column and, on MySQL and MariaDB, the binary collation.
+     * The four tables on the connection of the plugin's ORM tables: present, with the columns and unique keys of
+     * the current migrations, and on MySQL and MariaDB with the binary collation.
      *
      * @return array{0: 'pass'|'warn'|'fail', 1: string}
      */
     private function tables(): array
     {
-        $connection = ConnectionManager::get('default');
-        if (!$connection instanceof Connection) {
-            return ['warn', 'the default connection is not a database connection; tables not inspected'];
+        $connection = $this->fetchTable(self::TABLE_CLASSES['oauth_tokens'])->getConnection();
+        $where = sprintf(' (connection "%s")', $connection->configName());
+        $missing = [];
+        $columns = [];
+        $unique = [];
+        foreach (self::TABLE_CLASSES as $name => $class) {
+            $collection = $this->fetchTable($class)->getConnection()->getSchemaCollection();
+            if (!in_array($name, $collection->listTables(), true)) {
+                $missing[] = $name;
+                continue;
+            }
+            $schema = $collection->describe($name);
+            foreach (array_diff(self::COLUMNS[$name], $schema->columns()) as $column) {
+                $columns[] = $name . '.' . $column;
+            }
+            // A unique index is reflected as a unique constraint or a unique index, depending on the database.
+            $keys = [];
+            foreach (array_merge($schema->constraints(), $schema->indexes()) as $key) {
+                $definition = $schema->getConstraint($key) ?? $schema->getIndex($key);
+                if (($definition['type'] ?? null) === 'unique') {
+                    $keys[] = (array)$definition['columns'];
+                }
+            }
+            foreach (self::UNIQUE[$name] as $key) {
+                if (!in_array($key, $keys, true)) {
+                    $unique[] = $name . ' (' . implode(', ', $key) . ')';
+                }
+            }
         }
-        $collection = $connection->getSchemaCollection();
-        $missing = array_diff(self::TABLES, $collection->listTables());
+        $migrate = 'copy the plugin migration into the application (config/Migrations) and run '
+            . 'bin/cake migrations migrate';
         if ($missing !== []) {
+            return ['fail', 'missing ' . implode(', ', $missing) . '; ' . $migrate . $where];
+        }
+        if ($columns !== []) {
             return [
                 'fail',
-                'missing ' . implode(', ', $missing) . '; copy the plugin migration into the application '
-                . '(config/Migrations) and run bin/cake migrations migrate',
+                'missing columns ' . implode(', ', $columns) . '; copy the current plugin migrations into the '
+                . 'application and run bin/cake migrations migrate' . $where,
             ];
         }
-        if (!in_array('family_started_at', $collection->describe('oauth_tokens')->columns(), true)) {
+        if ($unique !== []) {
             return [
                 'fail',
-                'oauth_tokens has no family_started_at column; copy the current plugin migration into the '
-                . 'application and run bin/cake migrations migrate',
+                'missing unique keys on ' . implode(', ', $unique) . '; without them a hash could match two rows. '
+                . 'Recreate the tables with the plugin migration' . $where,
             ];
         }
         if ($connection->getDriver() instanceof Mysql) {
-            $list = "'" . implode("', '", self::TABLES) . "'";
+            $list = "'" . implode("', '", array_keys(self::TABLE_CLASSES)) . "'";
             $rows = $connection->execute(
                 'SELECT TABLE_NAME AS t, COLUMN_NAME AS c FROM information_schema.COLUMNS '
                 . 'WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME IN (' . $list . ') '
                 . "AND COLLATION_NAME IS NOT NULL AND COLLATION_NAME <> 'utf8mb4_bin'",
             )->fetchAll('assoc') ?: [];
             if ($rows !== []) {
-                $columns = array_map(fn(array $row): string => $row['t'] . '.' . $row['c'], $rows);
+                $names = array_map(fn(array $row): string => $row['t'] . '.' . $row['c'], $rows);
 
                 return [
                     'fail',
                     'these columns are not utf8mb4_bin, so subjects match case-insensitively: '
-                    . implode(', ', $columns),
+                    . implode(', ', $names),
                 ];
             }
         }
 
         return ['pass', 'all four tables exist'];
+    }
+
+    /**
+     * Why the cache $name keeps nothing from one request to the next (an Array or Null engine), or null.
+     *
+     * @param string $name A configured cache.
+     * @return string|null
+     */
+    private static function forgetfulCache(string $name): ?string
+    {
+        $engine = Cache::pool($name);
+        if (!$engine instanceof ArrayEngine && !$engine instanceof NullEngine) {
+            return null;
+        }
+
+        return sprintf(
+            'the cache "%s" uses %s, which keeps nothing from one request to the next',
+            $name,
+            (new ReflectionClass($engine))->getShortName(),
+        );
     }
 
     /**
@@ -368,32 +483,123 @@ class OAuthCheckCommand extends Command
     }
 
     /**
-     * Whether the application's CSRF middleware skips the token endpoint.
+     * The application's middleware, in order: its own queue, then what its plugins add (as the server does).
+     *
+     * @return list<object>|string The middleware, or why it could not be inspected.
+     */
+    private function middlewareList(): array|string
+    {
+        if ($this->middleware !== null) {
+            return $this->middleware;
+        }
+        $app = $this->application();
+        if (is_string($app)) {
+            return $this->middleware = $app;
+        }
+        $queue = $app->middleware(new MiddlewareQueue());
+        // The new application has no plugins of its own; the running ones are the application's.
+        foreach (Plugin::getCollection()->with('middleware') as $plugin) {
+            $queue = $plugin->middleware($queue);
+        }
+        $list = [];
+        foreach ($queue as $middleware) {
+            $list[] = $middleware;
+        }
+
+        return $this->middleware = $list;
+    }
+
+    /**
+     * Whether RoutingMiddleware runs before the CSRF and authentication middleware: before routing there is no
+     * matched route, so a bearer request is never skipped by csrfSkip() and the Token authenticator refuses every
+     * token of this server.
+     *
+     * @return array{0: 'pass'|'warn'|'fail', 1: string}
+     */
+    private function middlewareOrder(): array
+    {
+        $list = $this->middlewareList();
+        if (is_string($list)) {
+            return ['warn', $list . '; its middleware was not inspected'];
+        }
+        $routed = false;
+        $early = [];
+        foreach ($list as $middleware) {
+            if ($middleware instanceof RoutingMiddleware) {
+                $routed = true;
+            } elseif (!$routed && $middleware instanceof AuthenticationMiddleware) {
+                $early[] = 'AuthenticationMiddleware runs before RoutingMiddleware: the Token authenticator refuses '
+                    . 'every token of this server there';
+            } elseif (!$routed && self::isCsrf($middleware)) {
+                $early[] = (new ReflectionClass($middleware))->getShortName() . ' runs before RoutingMiddleware: '
+                    . 'a bearer request is never skipped there';
+            }
+        }
+        if ($early !== []) {
+            return ['warn', implode('; ', $early) . '; add RoutingMiddleware first'];
+        }
+
+        return $routed
+            ? ['pass', 'RoutingMiddleware runs before the CSRF and authentication middleware']
+            : ['warn', 'no RoutingMiddleware in the queue; the OAuth routes and the token paths need it'];
+    }
+
+    /**
+     * Whether $middleware is one of Cake's CSRF middleware.
+     *
+     * @param object $middleware The middleware.
+     * @return bool
+     */
+    private static function isCsrf(object $middleware): bool
+    {
+        return $middleware instanceof CsrfProtectionMiddleware
+            || $middleware instanceof SessionCsrfProtectionMiddleware;
+    }
+
+    /**
+     * Whether the application's CSRF middleware skips the token endpoint and nothing a session uses: the consent
+     * and connections pages, the home page and the login.
      *
      * @param \CakeDC\OAuthServer\Config\PluginConfig $config The configuration.
      * @return array{0: 'pass'|'warn'|'fail', 1: string}
      */
     private function csrf(PluginConfig $config): array
     {
-        $app = $this->application();
-        if (is_string($app)) {
-            return ['warn', $app . '; its middleware was not inspected'];
+        $list = $this->middlewareList();
+        if (is_string($list)) {
+            return ['warn', $list . '; its middleware was not inspected'];
         }
-        $queue = $app->middleware(new MiddlewareQueue());
-        foreach ($queue as $middleware) {
-            if (!$middleware instanceof CsrfProtectionMiddleware) {
+        foreach ($list as $middleware) {
+            if (!self::isCsrf($middleware)) {
                 continue;
             }
-            $callback = (new ReflectionProperty(CsrfProtectionMiddleware::class, 'skipCheckCallback'))
-                ->getValue($middleware);
-            $request = new ServerRequest([
-                'url' => $config->routePrefix() . '/token',
+            $name = (new ReflectionClass($middleware))->getShortName();
+            $callback = (new ReflectionProperty($middleware, 'skipCheckCallback'))->getValue($middleware);
+            $skips = fn(string $path): bool => is_callable($callback) && $callback(new ServerRequest([
+                'url' => $path,
                 'environment' => ['REQUEST_METHOD' => 'POST'],
-            ]);
+            ])) === true;
+            $prefix = $config->lenientRouting()['prefix'];
+            if (!$skips($prefix . '/token')) {
+                return ['fail', 'add OAuthServer::csrfSkip($request) to the ' . $name . ' skipCheckCallback'];
+            }
+            $session = array_values(array_filter(
+                array_unique([$prefix . '/authorize', $prefix . '/connections', '/', $this->loginPath($config)]),
+                fn(?string $path): bool => $path !== null && $skips($path),
+            ));
+            if ($session !== []) {
+                return [
+                    'fail',
+                    sprintf(
+                        'the %s skipCheckCallback also skips session routes (%s), which must stay CSRF checked; '
+                        . 'use OAuthServer::csrfSkip($request)',
+                        $name,
+                        implode(', ', $session),
+                    ),
+                ];
+            }
 
-            return is_callable($callback) && $callback($request) === true
-                ? ['pass', 'the token, register, revoke and introspect endpoints are skipped']
-                : ['fail', 'add OAuthServer::csrfSkip($request) to the CsrfProtectionMiddleware skipCheckCallback'];
+            return ['pass', 'the token, register, revoke and introspect endpoints are skipped'];
         }
 
         return [
@@ -404,6 +610,63 @@ class OAuthCheckCommand extends Command
     }
 
     /**
+     * The path of the login URL when it is on this site, or null.
+     *
+     * @param \CakeDC\OAuthServer\Config\PluginConfig $config The configuration.
+     * @return string|null
+     */
+    private function loginPath(PluginConfig $config): ?string
+    {
+        try {
+            $url = Router::url($config->login()['url']);
+        } catch (Throwable) {
+            return null;
+        }
+
+        return str_starts_with($url, '/') && !str_starts_with($url, '//') ? (string)strtok($url, '?') : null;
+    }
+
+    /**
+     * Whether `<prefix>/token` reaches the plugin's controller, or another route of the application takes it.
+     *
+     * @param \CakeDC\OAuthServer\Config\PluginConfig $config The configuration.
+     * @return array{0: 'pass'|'warn'|'fail', 1: string}
+     */
+    private function routes(PluginConfig $config): array
+    {
+        $path = $config->lenientRouting()['prefix'] . '/token';
+        try {
+            $params = Router::parseRequest(new ServerRequest([
+                'url' => $path,
+                'environment' => ['REQUEST_METHOD' => 'POST'],
+            ]));
+        } catch (MissingRouteException) {
+            return ['fail', $path . ' matches no route; the plugin\'s routes are not loaded'];
+        }
+        if (
+            ($params['plugin'] ?? null) !== 'CakeDC/OAuthServer'
+            || ($params['controller'] ?? null) !== 'OAuth'
+            || ($params['action'] ?? null) !== 'token'
+        ) {
+            return [
+                'fail',
+                sprintf(
+                    '%s goes to %s, not to the plugin; a route of the application connected before the plugin\'s '
+                    . 'takes it',
+                    $path,
+                    implode('.', array_filter([
+                        is_string($params['plugin'] ?? null) ? $params['plugin'] : null,
+                        is_string($params['controller'] ?? null) ? $params['controller'] : null,
+                        is_string($params['action'] ?? null) ? $params['action'] : null,
+                    ])),
+                ),
+            ];
+        }
+
+        return ['pass', $path . ' reaches the plugin'];
+    }
+
+    /**
      * The order of the authenticators: the plugin's Token authenticator must come before the session one, or
      * a session cookie would hide a revoked or foreign bearer token.
      *
@@ -411,9 +674,18 @@ class OAuthCheckCommand extends Command
      */
     private function authenticators(): array
     {
-        $names = $this->authenticatorNames();
-        if (is_string($names)) {
-            return ['warn', $names];
+        $chain = $this->authenticatorChain();
+        if (is_string($chain)) {
+            return ['warn', $chain];
+        }
+        [$names, $tokenAuthenticators] = $chain;
+        foreach ($tokenAuthenticators as $authenticator) {
+            try {
+                $authenticator->resolve();
+            } catch (Throwable $e) {
+                // It is built, but refuses every token of this server with 401.
+                return ['fail', 'the Token authenticator refuses every token: ' . $e->getMessage()];
+            }
         }
         $token = null;
         $session = null;
@@ -444,12 +716,13 @@ class OAuthCheckCommand extends Command
     }
 
     /**
-     * The authenticator classes of the application's authentication service, in order; or a reason why they
-     * cannot be told. Builds the service with a probe request, like the middleware does.
+     * The authenticator classes of the application's authentication service, in order, and its Token
+     * authenticators; or a reason why they cannot be told. Builds the service with a probe request, like the
+     * middleware does.
      *
-     * @return list<class-string>|string
+     * @return array{0: list<class-string>, 1: list<\CakeDC\OAuthServer\Authenticator\TokenAuthenticator>}|string
      */
-    private function authenticatorNames(): array|string
+    private function authenticatorChain(): array|string
     {
         $app = $this->application();
         if (!is_string($app) && $app instanceof AuthenticationServiceProviderInterface) {
@@ -461,12 +734,16 @@ class OAuthCheckCommand extends Command
                     break;
                 }
                 $classes = [];
+                $tokens = [];
                 foreach ($service->authenticators() as $authenticator) {
                     $classes[] = $authenticator::class;
+                    if ($authenticator instanceof TokenAuthenticator) {
+                        $tokens[] = $authenticator;
+                    }
                 }
-                $first ??= $classes;
-                if (array_filter($classes, fn(string $class): bool => is_a($class, TokenAuthenticator::class, true))) {
-                    return $classes;
+                $first ??= [$classes, $tokens];
+                if ($tokens !== []) {
+                    return [$classes, $tokens];
                 }
             }
             if ($first !== null) {
@@ -479,14 +756,21 @@ class OAuthCheckCommand extends Command
         if (Plugin::isLoaded('CakeDC/Users') && is_array($configured)) {
             // cakedc/users builds its own service from this configuration.
             $classes = [];
+            $tokens = [];
             foreach ($configured as $name => $settings) {
                 $class = is_array($settings) ? ($settings['className'] ?? null) : null;
-                $classes[] = is_string($class)
-                    ? self::authenticatorClass($class)
-                    : (string)$name;
+                $class = is_string($class) ? self::authenticatorClass($class) : (string)$name;
+                if (!class_exists($class)) {
+                    continue;
+                }
+                $classes[] = $class;
+                if (is_array($settings) && is_a($class, TokenAuthenticator::class, true)) {
+                    unset($settings['className']);
+                    $tokens[] = new $class(new IdentifierCollection(), $settings);
+                }
             }
 
-            return array_values(array_filter($classes, 'class_exists'));
+            return [$classes, $tokens];
         }
 
         return is_string($app)

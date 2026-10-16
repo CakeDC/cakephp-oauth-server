@@ -59,14 +59,23 @@ override that writes `<form>` by hand. Build the form with `$this->Form->create(
 ## "The OAuth issuer is invalid"
 
 The issuer (`OAuthServer.issuer`, or `App.fullBaseUrl` when it is not set) must be an absolute https URL
-without a query; http works on localhost only. The message names the setting to fix. On the CLI this does
-not stop `bin/cake`; web requests fail at boot.
+without a query; http works on localhost only. The message names the setting to fix. It shows in
+`bin/cake oauth check` and in the `oauth` log; the OAuth endpoints answer 503 until it is fixed, while the rest of
+the application keeps working.
 
-## Every request fails after a configuration change
+## 503 on every OAuth endpoint, or 401 for every token
 
-The Token authenticator builds the OAuth server in its constructor, so an invalid `OAuthServer`
-configuration (an undeclared resource in the authenticator's `resource`, an unknown key, a wrong type)
-breaks every request, including the login page. Run `bin/cake oauth check` and fix what it names.
+The `OAuthServer` configuration is invalid (an unknown key, a wrong type, a resource declared with a string, a
+short `Security.salt` without `OAuthServer.secret`, an invalid `users` or `tokenPaths` value), so the server
+cannot be built. The plugin fails closed on its own routes only: the endpoints answer 503, the consent and
+connections pages show your error page with 503, and every token of this server gets 401 with
+`The access token cannot be validated.`; your other pages keep working. The `oauth` log has one line per refusal
+with the reason. Run `bin/cake oauth check` and fix what it names
+([configuration](configuration.md#an-invalid-configuration)).
+
+The same 401 appears for a single Token authenticator whose `resource` is not declared, whose resource is at the
+host root without `paths`, or whose `paths` is not a list of path prefixes; the `Authenticators` line of
+`oauth check` names it.
 
 ## 401 "The access token is not valid at this address"
 
@@ -131,12 +140,15 @@ See the table in [commands](commands.md#oauth-check). The ones that most often f
 | Line | Usual cause |
 | --- | --- |
 | `Secret` | `OAuthServer.secret` shorter than 32 characters, or no usable `Security.salt` |
-| `Tables` | The migration was not run (`bin/cake migrations migrate -p CakeDC/OAuthServer`), or an old copy of it was; copy the current file |
+| `Configuration` | An invalid `OAuthServer` setting; the message names it |
+| `Tables` | The migration was not run (`bin/cake migrations migrate -p CakeDC/OAuthServer`), or an old copy of it was (a missing column or unique key); copy the current file. The line names the connection of the plugin's tables, which is where it looks |
 | `Users` | The users table has no `active` finder; add `findActive()` or set `userProvider.finder` |
-| `CSRF` | The skip callback is missing, or there is no `CsrfProtectionMiddleware` at all |
-| `Authenticators` | The Session authenticator is loaded before the Token one, there is no Token authenticator, or it cannot be built (a root resource needs `paths`) |
+| `Routes` | A route of your application connected before the plugin's takes `<prefix>/token` |
+| `Middleware` | `CsrfProtectionMiddleware` or `AuthenticationMiddleware` runs before `RoutingMiddleware`, where bearer requests cannot be told apart |
+| `CSRF` | The skip callback is missing, it skips session pages too (a callback like `fn () => true`), or there is no CSRF middleware at all |
+| `Authenticators` | The Session authenticator is loaded before the Token one, there is no Token authenticator, or it refuses every token (an undeclared `resource`, a root resource without `paths`) |
 | `RBAC` | The bypass rule is missing |
-| `Rate limiting` | The cache configuration named in `rateLimit.cache` does not exist |
+| `Rate limiting` | The cache configuration named in `rateLimit.cache` does not exist, or it is an `Array` or `Null` engine, which keeps nothing between requests |
 | `Client metadata documents` | `ext-curl` is not installed |
 
 ## Scope names with dots on the connections form

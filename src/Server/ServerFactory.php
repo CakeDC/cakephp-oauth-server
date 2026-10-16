@@ -48,6 +48,8 @@ final class ServerFactory
      */
     public function create(?ServerRequest $request = null): AuthorizationServer
     {
+        // Every invalid setting keeps the server from being built, also the ones only the plugin reads.
+        $this->config->validatePluginSettings();
         $users = $this->userProvider();
         $login = $this->config->login();
         $services = $this->config->services();

@@ -40,8 +40,8 @@ Options of `CakeDC\OAuthServer\Authenticator\TokenAuthenticator`:
 
 | Option | Default | Meaning |
 | --- | --- | --- |
-| `resource` | `null` | The resource identifier the token must be issued for. `null` is the server's default resource. It must be declared in `OAuthServer.resources`, or the constructor throws `InvalidArgumentException` |
-| `paths` | the path of the resource identifier | Path prefixes where the authenticator authenticates, for example `['/api']`. Matched on segment boundaries (`/api` covers `/api` and `/api/x`, not `/apix`), base directory included, after the router's normalisation (a path with `%2F`, `//` or `.` / `..` segments matches nothing). Both the request path and the static part of the template of the route that matched it must be within them ([where a token works](#where-a-token-works)). A resource at the host root (`https://example.com`) needs `paths` set explicitly (`['/']` covers every route), otherwise the constructor throws `InvalidArgumentException` |
+| `resource` | `null` | The resource identifier the token must be issued for. `null` is the server's default resource. It must be declared in `OAuthServer.resources` (in any spelling); otherwise every token of this server is refused with 401 |
+| `paths` | the path of the resource identifier | Path prefixes where the authenticator authenticates, for example `['/api']`. Matched on segment boundaries (`/api` covers `/api` and `/api/x`, not `/apix`), base directory included, after the router's normalisation (a path with `%2F`, `//` or `.` / `..` segments matches nothing). Both the request path and the static part of the template of the route that matched it must be within them ([where a token works](#where-a-token-works)). A resource at the host root (`https://example.com`) needs `paths` set explicitly (`['/']` covers every route); otherwise, and for an invalid list, every token of this server is refused with 401 |
 | `header` | `Authorization` | The request header that carries the bearer token |
 | `resourceMetadataUrl` | `null` | URL of the protected resource metadata document (RFC 9728) that your endpoint serves. When set, it is added to the 401 challenge as `resource_metadata` |
 | `skipTwoFactorVerify` | `true` | For `cakedc/users`: a token is not asked for a second factor |
@@ -49,9 +49,13 @@ Options of `CakeDC\OAuthServer\Authenticator\TokenAuthenticator`:
 With `CakeDC/Users` loaded, the plugin registers the authenticator itself under the name
 `OAuthServerToken`; see [cakedc-users](cakedc-users.md).
 
-The authenticator builds the OAuth server in its constructor. A broken `OAuthServer` configuration (for
-example a resource that is not declared) therefore breaks every request, the login page included. Run
-`bin/cake oauth check` after every change.
+Building the authenticator reads no configuration, so a wrong option or a broken `OAuthServer` configuration
+cannot break the pages of your application, the login included. The resource, the paths and the server are
+resolved on the first request that carries a bearer token with this server's prefix. When that fails (an
+undeclared `resource`, a root resource without `paths`, an invalid `paths` list, a configuration the server
+cannot be built from) the request gets the 401 challenge with `The access token cannot be validated.`, it is
+never handed to the next authenticator, and the reason goes to the `oauth` log. `bin/cake oauth check` reports
+the same problem on its `Authenticators` line; run it after every change.
 
 ## Authenticator order
 

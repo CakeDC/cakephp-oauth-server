@@ -94,3 +94,6 @@ msgstr "Vence en (días, hasta {0})"
 
 msgid "Create token"
 msgstr "Crear token"
+
+msgid "The authorization service is not available right now. Try again later."
+msgstr "El servicio de autorización no está disponible en este momento. Inténtalo de nuevo más tarde."

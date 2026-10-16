@@ -22,7 +22,6 @@ use CakeDC\OAuthServer\Command\OAuthTokenRevokeCommand;
 use CakeDC\OAuthServer\Config\PluginConfig;
 use CakeDC\OAuthServer\I18n\PluginMessagesLoader;
 use CakeDC\OAuthServer\Integration\UsersIntegration;
-use InvalidArgumentException;
 
 /**
  * An OAuth 2.1 authorization server for CakePHP applications.
@@ -38,15 +37,8 @@ class OAuthServerPlugin extends BasePlugin
         $this->registerLogEngine();
         PluginMessagesLoader::register();
         if (Plugin::isLoaded('CakeDC/Users')) {
-            try {
-                UsersIntegration::apply();
-            } catch (InvalidArgumentException $e) {
-                // Never break `bin/cake`: the integration step is skipped and `oauth check` reports the
-                // invalid setting. The web keeps the clear error.
-                if (!$this->isCli()) {
-                    throw $e;
-                }
-            }
+            // Never throws: an invalid setting makes the authenticator it registers refuse this server's tokens.
+            UsersIntegration::apply();
         }
     }
 
@@ -92,39 +84,22 @@ class OAuthServerPlugin extends BasePlugin
     /**
      * Connects the metadata document and the endpoints.
      *
-     * An invalid issuer or route prefix fails here, at boot, with an error that names the setting, instead
-     * of connecting routes that do not match the metadata document the server publishes.
+     * Never throws, on the web or the command line: with an invalid configuration the routes are connected where
+     * the settings that can still be read put them (see PluginConfig::lenientRouting()), the endpoints answer 503
+     * and log the reason, and the rest of the application and `bin/cake` keep working. The paths do not depend on
+     * the secret, so a missing or weak `Security.salt` changes nothing here.
      *
      * @param \Cake\Routing\RouteBuilder $routes The builder.
      * @return void
-     * @throws \InvalidArgumentException For an invalid configuration.
      */
     public function routes(RouteBuilder $routes): void
     {
-        $config = PluginConfig::fromConfigure();
-        if ($this->isCli()) {
-            // Never break `bin/cake`: `oauth check` reports the invalid setting.
-            $routing = $config->lenientRouting();
-        } else {
-            $routing = $config->routing();
-        }
+        $routing = PluginConfig::fromConfigure()->lenientRouting();
         $defaults = ['plugin' => 'CakeDC/OAuthServer', 'controller' => 'OAuth'];
-        if ($routing['metadata'] !== null) {
-            $routes->connect($routing['metadata'], $defaults + ['action' => 'metadata']);
-        }
+        $routes->connect($routing['metadata'], $defaults + ['action' => 'metadata']);
         foreach (['authorize', 'token', 'register', 'revoke', 'introspect', 'connections'] as $action) {
             $routes->connect($routing['prefix'] . '/' . $action, $defaults + ['action' => $action]);
         }
-    }
-
-    /**
-     * Whether this runs on the command line. A seam for tests.
-     *
-     * @return bool
-     */
-    protected function isCli(): bool
-    {
-        return PHP_SAPI === 'cli';
     }
 
     /**

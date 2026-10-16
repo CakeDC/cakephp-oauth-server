@@ -8,13 +8,15 @@ use Authentication\Authenticator\AuthenticationRequiredException;
 use Authentication\Authenticator\Result;
 use Authentication\Authenticator\ResultInterface;
 use Authentication\Authenticator\StatelessInterface;
-use Authentication\Identifier\IdentifierInterface;
 use CakeDC\OAuth\Server\Token\ValidationFailure;
+use CakeDC\OAuthServer\Config\PluginConfig;
 use CakeDC\OAuthServer\Http\RequestPaths;
 use CakeDC\OAuthServer\Identity\OAuthIdentity;
+use CakeDC\OAuthServer\Log\CakeLogger;
 use CakeDC\OAuthServer\OAuthServer;
 use InvalidArgumentException;
 use Psr\Http\Message\ServerRequestInterface;
+use Throwable;
 
 /**
  * Authenticates requests carrying a bearer token of this server, below the path of the token's resource.
@@ -29,6 +31,12 @@ use Psr\Http\Message\ServerRequestInterface;
  * a token for the API cannot act as the person on a session route that is not below the API's path. Routes
  * of a resource therefore need a static prefix within its paths. A resource at the host root needs `paths`
  * set explicitly (`['/']` covers every route).
+ *
+ * Building it reads no configuration, so a broken `OAuthServer` configuration (or a wrong `resource` or `paths`
+ * option) cannot take every page of the application down. The resource, the paths and the server are resolved
+ * on the first request that carries a bearer token with this server's prefix; when that fails the request is
+ * refused with 401 (never passed on to the next authenticator) and the reason goes to the `oauth` log. When even
+ * the `tokenPrefix` setting cannot be read, every bearer token is treated as this server's and refused.
  *
  * It is stateless: the identity is never persisted, so a bearer request cannot become a browser login.
  */
@@ -45,56 +53,60 @@ class TokenAuthenticator extends AbstractAuthenticator implements StatelessInter
         'skipTwoFactorVerify' => true,
     ];
 
-    private string $resource;
-
     /**
-     * @var list<string>
+     * @var array{resource: string, paths: list<string>}|null
      */
-    private array $paths;
+    private ?array $resolved = null;
 
     private ?string $failure = null;
 
     /**
-     * @param \Authentication\Identifier\IdentifierInterface $identifiers Unused, required by the interface.
-     * @param array<string, mixed> $config Configuration.
+     * The resource this authenticator validates tokens for and the path prefixes where it authenticates, from its
+     * options and the `OAuthServer` configuration (read without the secret).
+     *
+     * @internal Used by the plugin and by `oauth check`; not part of the public API.
+     * @return array{resource: string, paths: list<string>}
      * @throws \InvalidArgumentException When the resource is not declared in the server configuration, when `paths`
      *   is invalid, or when the resource is at the host root and `paths` is not set.
      */
-    public function __construct(IdentifierInterface $identifiers, array $config = [])
+    public function resolve(): array
     {
-        parent::__construct($identifiers, $config);
-        $resources = OAuthServer::server()->config()->resources;
-        $resource = $this->getConfig('resource');
+        if ($this->resolved !== null) {
+            return $this->resolved;
+        }
+        $config = PluginConfig::fromConfigure();
+        $option = $this->getConfig('resource');
+        $resource = $option === null
+            ? $config->defaultResourceIdentifier()
+            : (is_string($option) ? $config->declaredResource($option) : null);
         if ($resource === null) {
-            $this->resource = $resources->defaultResource()->identifier;
-        } elseif (!is_string($resource) || $resources->get($resource) === null) {
             throw new InvalidArgumentException(sprintf(
                 'The resource "%s" of the Token authenticator is not declared in OAuthServer.resources.',
-                is_string($resource) ? $resource : get_debug_type($resource),
+                is_string($option) ? $option : get_debug_type($option),
             ));
-        } else {
-            $this->resource = $resource;
         }
-        $this->paths = $this->resolvePaths($this->getConfig('paths'));
+
+        return $this->resolved = ['resource' => $resource, 'paths' => $this->resolvePaths($resource)];
     }
 
     /**
      * The path prefixes where the authenticator authenticates.
      *
-     * @param mixed $paths The `paths` option.
+     * @param string $resource The resource identifier.
      * @return list<string>
      * @throws \InvalidArgumentException
      */
-    private function resolvePaths(mixed $paths): array
+    private function resolvePaths(string $resource): array
     {
+        $paths = $this->getConfig('paths');
         if ($paths === null) {
-            $path = RequestPaths::ofResource($this->resource);
+            $path = RequestPaths::ofResource($resource);
             if ($path === '/') {
                 throw new InvalidArgumentException(sprintf(
                     'The resource "%s" is at the host root, so its token would be accepted on every route. '
                     . 'Set the "paths" option of the Token authenticator explicitly: a list of path prefixes, '
                     . 'or [\'/\'] to accept the token on every route.',
-                    $this->resource,
+                    $resource,
                 ));
             }
 
@@ -104,10 +116,8 @@ class TokenAuthenticator extends AbstractAuthenticator implements StatelessInter
         foreach (is_array($paths) ? $paths : [] as $path) {
             $value = is_string($path) && str_starts_with($path, '/') ? RequestPaths::normalize($path) : null;
             if ($value === null) {
-                throw new InvalidArgumentException(
-                    'The "paths" option of the Token authenticator must be a non-empty list of path prefixes '
-                    . 'that start with "/".',
-                );
+                $normalized = [];
+                break;
             }
             $normalized[] = $value;
         }
@@ -131,12 +141,22 @@ class TokenAuthenticator extends AbstractAuthenticator implements StatelessInter
         if ($token === null) {
             return new Result(null, Result::FAILURE_CREDENTIALS_MISSING);
         }
-        if (!RequestPaths::routedWithin($request, $this->paths)) {
+        try {
+            ['resource' => $resource, 'paths' => $paths] = $this->resolve();
+        } catch (Throwable $e) {
+            return $this->unusable($request, $e);
+        }
+        if (!RequestPaths::routedWithin($request, $paths)) {
             $this->failure = 'The access token is not valid at this address.';
 
             return new Result(null, Result::FAILURE_CREDENTIALS_INVALID, [$this->failure]);
         }
-        $result = OAuthServer::server()->tokenValidator()->validate($token, $this->resource);
+        try {
+            $validator = OAuthServer::server()->tokenValidator();
+        } catch (Throwable $e) {
+            return $this->unusable($request, $e);
+        }
+        $result = $validator->validate($token, $resource);
         if ($result instanceof ValidationFailure) {
             $this->failure = $result->description;
 
@@ -144,6 +164,25 @@ class TokenAuthenticator extends AbstractAuthenticator implements StatelessInter
         }
 
         return new Result(new OAuthIdentity($result), Result::SUCCESS);
+    }
+
+    /**
+     * Refuses a token of this server that cannot be checked because of the configuration, and logs why.
+     *
+     * @param \Psr\Http\Message\ServerRequestInterface $request The request.
+     * @param \Throwable $error What failed.
+     * @return \Authentication\Authenticator\ResultInterface
+     */
+    private function unusable(ServerRequestInterface $request, Throwable $error): ResultInterface
+    {
+        (new CakeLogger())->error(
+            'The Token authenticator refused a bearer token at {path}: the OAuth server configuration is invalid. '
+            . '{message}',
+            ['path' => $request->getUri()->getPath(), 'message' => $error->getMessage(), 'exception' => $error],
+        );
+        $this->failure = 'The access token cannot be validated.';
+
+        return new Result(null, Result::FAILURE_CREDENTIALS_INVALID, [$this->failure]);
     }
 
     /**
@@ -178,7 +217,9 @@ class TokenAuthenticator extends AbstractAuthenticator implements StatelessInter
     }
 
     /**
-     * The bearer token of the request when it carries this server's access or personal prefix, or null.
+     * The bearer token of the request when it carries this server's access or personal prefix, or null. The
+     * prefix is read as configured, without building the server; when it cannot be read every bearer token
+     * counts as this server's, so it is refused rather than passed on.
      */
     private function ownToken(ServerRequestInterface $request): ?string
     {
@@ -186,8 +227,12 @@ class TokenAuthenticator extends AbstractAuthenticator implements StatelessInter
         if (preg_match('/^Bearer +([A-Za-z0-9\-._~+\/]+=*) *\z/i', $header, $matches) !== 1) {
             return null;
         }
-        $prefix = OAuthServer::server()->config()->tokenPrefix;
-        if (!str_starts_with($matches[1], $prefix . '_at_') && !str_starts_with($matches[1], $prefix . '_pat_')) {
+        $prefix = PluginConfig::fromConfigure()->configuredTokenPrefix();
+        if (
+            $prefix !== null
+            && !str_starts_with($matches[1], $prefix . '_at_')
+            && !str_starts_with($matches[1], $prefix . '_pat_')
+        ) {
             return null;
         }
 

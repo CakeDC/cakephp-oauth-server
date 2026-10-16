@@ -15,6 +15,7 @@ use CakeDC\OAuthServer\Http\RequestPaths;
 use CakeDC\OAuthServer\Identity\OrmUserProvider;
 use InvalidArgumentException;
 use Psr\Clock\ClockInterface;
+use Throwable;
 
 /**
  * The `OAuthServer` configuration: core settings for the server, plus the plugin's own.
@@ -38,6 +39,11 @@ final class PluginConfig
         'transport' => HttpTransportInterface::class,
         'dns' => DnsResolverInterface::class,
     ];
+
+    /**
+     * Stands in for the parts of the configuration a lenient read does not need; never reaches a token.
+     */
+    private const PLACEHOLDER_ISSUER = 'http://localhost';
 
     private ?ServerConfig $serverConfig = null;
 
@@ -84,11 +90,7 @@ final class PluginConfig
     private function buildServerConfig(?string $secret): ServerConfig
     {
         $core = array_diff_key($this->settings, self::PLUGIN_SECTIONS);
-        $configured = isset($core['issuer']);
-        $core['issuer'] = $this->checkedIssuer(
-            $configured ? $core['issuer'] : Configure::read('App.fullBaseUrl'),
-            $configured,
-        );
+        $core['issuer'] = $this->configuredIssuer();
         if ($secret !== null) {
             $core['secret'] = $secret;
         } elseif (!isset($core['secret'])) {
@@ -153,18 +155,107 @@ final class PluginConfig
     }
 
     /**
-     * Like routing(), but never throws: an invalid setting leaves the metadata path null and the prefix at
-     * `/oauth`. For the CLI, where `oauth check` reports the problem.
+     * Like routing(), but never throws, so no configuration can break the application or `bin/cake`.
      *
-     * @return array{prefix: string, metadata: string|null}
+     * When the configuration is invalid the endpoints still get their routes, so their requests reach the plugin
+     * and are answered with 503 (the reason goes to the `oauth` log) instead of 404, and `oauth check` reports it.
+     * The route prefix and the issuer are then read on their own: each one is used when it is valid by itself,
+     * else the prefix falls back to the core's default (`/oauth`) and the metadata document to the path of an
+     * issuer without a path.
+     *
+     * @return array{prefix: string, metadata: string}
      */
     public function lenientRouting(): array
     {
         try {
             return $this->routing();
-        } catch (InvalidArgumentException) {
-            return ['prefix' => '/oauth', 'metadata' => null];
+        } catch (Throwable) {
+            // Fall back to what can be read on its own.
         }
+        try {
+            $prefix = $this->placement(self::PLACEHOLDER_ISSUER, $this->settings['routePrefix'] ?? null)->routePrefix;
+        } catch (Throwable) {
+            $prefix = $this->placement(self::PLACEHOLDER_ISSUER, null)->routePrefix;
+        }
+        try {
+            $metadata = $this->placement($this->configuredIssuer(), null)->metadataPath();
+        } catch (Throwable) {
+            $metadata = $this->placement(self::PLACEHOLDER_ISSUER, null)->metadataPath();
+        }
+
+        return ['prefix' => $prefix, 'metadata' => $metadata];
+    }
+
+    /**
+     * Core settings made of $issuer, $routePrefix and placeholders, for reading the core's view of those two
+     * settings alone, or its defaults.
+     *
+     * @param string $issuer A canonical issuer.
+     * @param mixed $routePrefix The route prefix setting, or null for the core's default.
+     * @return \CakeDC\OAuth\Server\Config\ServerConfig
+     * @throws \InvalidArgumentException When $routePrefix is invalid.
+     */
+    private function placement(string $issuer, mixed $routePrefix): ServerConfig
+    {
+        $settings = [
+            'issuer' => $issuer,
+            'secret' => str_repeat('x', 32),
+            'resources' => [
+                self::PLACEHOLDER_ISSUER . '/placeholder' => ['scopes' => ['placeholder' => 'Placeholder']],
+            ],
+        ];
+        if ($routePrefix !== null) {
+            $settings['routePrefix'] = $routePrefix;
+        }
+
+        return ServerConfig::fromArray($settings);
+    }
+
+    /**
+     * The `tokenPrefix` setting as written, or the core's default when it is not set; null when it is not a
+     * string. Nothing else is read or validated, so this server's tokens can be told apart from other bearer
+     * tokens even when the rest of the configuration is broken.
+     *
+     * @return string|null
+     */
+    public function configuredTokenPrefix(): ?string
+    {
+        $prefix = $this->settings['tokenPrefix'] ?? null;
+        if ($prefix === null) {
+            return $this->placement(self::PLACEHOLDER_ISSUER, null)->tokenPrefix;
+        }
+
+        return is_string($prefix) ? $prefix : null;
+    }
+
+    /**
+     * Validates the plugin settings the server itself does not read (`users` and `tokenPaths`), so an invalid
+     * one keeps the server from being built like any other invalid setting.
+     *
+     * @return void
+     * @throws \InvalidArgumentException
+     */
+    public function validatePluginSettings(): void
+    {
+        $this->usersResource();
+        self::pathList($this->section('users')['paths'] ?? null, 'OAuthServer.users.paths');
+        $this->tokenPaths();
+    }
+
+    /**
+     * The issuer: `OAuthServer.issuer`, else `App.fullBaseUrl`, canonical and checked.
+     *
+     * @return string
+     * @throws \InvalidArgumentException
+     */
+    private function configuredIssuer(): string
+    {
+        $configured = isset($this->settings['issuer']);
+
+        return $this->checkedIssuer(
+            $configured ? $this->settings['issuer'] : Configure::read('App.fullBaseUrl'),
+            $configured,
+        );
     }
 
     /**
@@ -367,6 +458,19 @@ final class PluginConfig
         }
 
         return $paths;
+    }
+
+    /**
+     * The canonical identifier of the declared resource $identifier (in any spelling), or null when it is not
+     * declared. Read without touching the secret.
+     *
+     * @param string $identifier A resource identifier.
+     * @return string|null
+     * @throws \InvalidArgumentException For an invalid resource setting.
+     */
+    public function declaredResource(string $identifier): ?string
+    {
+        return $this->pathConfig()->resources->get($identifier)?->identifier;
     }
 
     /**

@@ -9,12 +9,15 @@ use Cake\Http\ServerRequest;
 use Cake\TestSuite\TestCase;
 use Cake\Utility\Security;
 use CakeDC\OAuth\Server\AuthorizationServer;
+use CakeDC\OAuthServer\Controller\OAuthController;
 use CakeDC\OAuthServer\OAuthServer;
 use CakeDC\OAuthServer\OAuthServerPlugin;
 use CakeDC\OAuthServer\Storage\OrmStorage;
 use CakeDC\OAuthServer\Test\Support\Fixtures;
 use CakeDC\OAuthServer\Test\Support\Routed;
 use CakeDC\OAuthServer\TestSuite\OAuthTestTrait;
+use ReflectionClass;
+use ReflectionMethod;
 
 class OAuthServerTest extends TestCase
 {
@@ -314,7 +317,7 @@ class OAuthServerTest extends TestCase
     /**
      * @return void
      */
-    public function testCsrfSkipNeverThrowsAndSkipsNothingWhenTheServerCannotBeBuilt(): void
+    public function testCsrfSkipNeverThrowsAndSkipsNoBearerRequestWhenTheServerCannotBeBuilt(): void
     {
         $token = $this->oauthTokenFor(1, ['api'], 'http://localhost/api');
         $salt = Security::getSalt();
@@ -328,11 +331,37 @@ class OAuthServerTest extends TestCase
             OAuthServer::reset();
         }
 
-        // A configuration that cannot be read at all.
+        // A configuration that cannot be read at all: the endpoints are routed at the default prefix (they answer
+        // 503 there), so they are still skipped; a bearer request is not.
         Configure::write('OAuthServer.routePrefix', 'no slash');
         Configure::write('OAuthServer.tokenPaths', 'not a list');
-        $this->assertFalse(OAuthServer::csrfSkip($this->post('/oauth/token')));
+        $this->assertTrue(OAuthServer::csrfSkip($this->post('/oauth/token')));
         $this->assertFalse(OAuthServer::csrfSkip($this->post('/api/posts', $token, '/api/**')));
+    }
+
+    /**
+     * @return void
+     */
+    public function testTheRbacRuleListsTheActionsOfTheController(): void
+    {
+        $rules = OAuthServer::rbacPermissions();
+        $actions = [];
+        foreach ((new ReflectionClass(OAuthController::class))->getMethods(ReflectionMethod::IS_PUBLIC) as $method) {
+            if ($method->getDeclaringClass()->getName() === OAuthController::class) {
+                $actions[] = $method->getName();
+            }
+        }
+
+        $this->assertCount(1, $rules);
+        $this->assertSame('CakeDC/OAuthServer', $rules[0]['plugin']);
+        $this->assertSame('OAuth', $rules[0]['controller']);
+        $this->assertTrue($rules[0]['bypassAuth']);
+        // Listed one by one: a future action does not inherit the bypass.
+        $this->assertSame(
+            ['metadata', 'authorize', 'token', 'register', 'revoke', 'introspect', 'connections'],
+            $rules[0]['action'],
+        );
+        $this->assertEqualsCanonicalizing($actions, $rules[0]['action']);
     }
 
     /**

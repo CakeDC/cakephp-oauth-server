@@ -3,14 +3,18 @@ declare(strict_types=1);
 
 namespace CakeDC\OAuthServer\Test\UsersIntegration;
 
+use Cake\Console\ConsoleIo;
 use Cake\Console\TestSuite\ConsoleIntegrationTestTrait;
+use Cake\Console\TestSuite\StubConsoleOutput;
 use Cake\Core\Configure;
 use Cake\Core\Plugin;
 use Cake\Http\ServerRequest;
+use Cake\Log\Engine\ArrayLog;
 use Cake\TestSuite\IntegrationTestTrait;
 use Cake\TestSuite\TestCase;
 use CakeDC\Auth\Rbac\Rbac;
 use CakeDC\OAuth\Server\Grant\Pkce;
+use CakeDC\OAuthServer\Command\OAuthCheckCommand;
 use CakeDC\OAuthServer\Config\PluginConfig;
 use CakeDC\OAuthServer\Integration\RbacPermissionsProvider;
 use CakeDC\OAuthServer\Integration\UsersIntegration;
@@ -18,7 +22,6 @@ use CakeDC\OAuthServer\OAuthServer;
 use CakeDC\OAuthServer\OAuthServerPlugin;
 use CakeDC\OAuthServer\Test\Support\Html;
 use CakeDC\OAuthServer\TestSuite\OAuthTestTrait;
-use InvalidArgumentException;
 use UsersTestApp\Application;
 
 class UsersIntegrationTest extends TestCase
@@ -264,6 +267,12 @@ class UsersIntegrationTest extends TestCase
         $this->assertFalse($rbac->checkPermissions($user, $this->routed('CakeDC/Users', 'Users', 'profile')));
         $this->assertFalse($rbac->checkPermissions($user, $this->routed(null, 'Pages', 'secret')));
         $this->assertFalse($rbac->checkPermissions($user, $this->routed('CakeDC/OAuthServer', 'Other', 'index')));
+        // The rule lists the endpoints: another action of the same controller would not inherit the bypass.
+        foreach (['metadata', 'authorize', 'token', 'register', 'revoke', 'introspect', 'connections'] as $action) {
+            $this->assertTrue($rbac->checkPermissions([], $this->routed('CakeDC/OAuthServer', 'OAuth', $action)), $action);
+        }
+        $this->assertFalse($rbac->checkPermissions([], $this->routed('CakeDC/OAuthServer', 'OAuth', 'other')));
+        $this->assertFalse($rbac->checkPermissions($user, $this->routed('CakeDC/OAuthServer', 'OAuth', 'other')));
         // The rule names the plugin: same controller and action names elsewhere stay closed.
         foreach ([[], $user] as $who) {
             $this->assertFalse($rbac->checkPermissions($who, $this->routed(null, 'OAuth', 'token')));
@@ -432,49 +441,43 @@ class UsersIntegrationTest extends TestCase
         }
     }
 
-    private function pluginRunningOn(bool $cli): OAuthServerPlugin
-    {
-        return new class ($cli) extends OAuthServerPlugin {
-            public function __construct(private readonly bool $cli)
-            {
-                parent::__construct();
-            }
-
-            protected function isCli(): bool
-            {
-                return $this->cli;
-            }
-        };
-    }
-
-    public function testAnInvalidUsersSettingNeverBreaksTheCommandLine(): void
+    public function testAnInvalidUsersSettingNeverBreaksTheApplication(): void
     {
         $authenticators = Configure::read('Auth.Authenticators');
         $original = Configure::read('OAuthServer');
         $app = $this->application();
+        $token = $this->oauthTokenFor($this->createUser()->get('id'), ['api'], 'http://localhost/api');
         try {
             foreach (['resource' => 5, 'paths' => 'api', 'typo' => true] as $key => $value) {
                 Configure::delete('Auth.Authenticators.OAuthServerToken');
                 Configure::write('OAuthServer.users', [$key => $value]);
+                OAuthServer::reset();
 
-                // On the CLI the integration step is skipped.
-                $this->pluginRunningOn(true)->bootstrap($app);
-                $this->assertNull(Configure::read('Auth.Authenticators.OAuthServerToken'), $key);
+                // Booting never throws, on the web or the command line, and the authenticator is still in front.
+                (new OAuthServerPlugin())->bootstrap($app);
+                $this->assertSame(
+                    'CakeDC/OAuthServer.OAuthServerToken',
+                    Configure::read('Auth.Authenticators.OAuthServerToken.className'),
+                    $key,
+                );
+                $this->assertSame('OAuthServerToken', array_key_first((array)Configure::read('Auth.Authenticators')));
+
+                // The application's pages work; a token of this server is refused, as the server cannot be built.
+                $this->get('/api/me');
+                $this->assertResponseEquals('{"error":"unauthorized"}', $key);
+                $this->get('/login');
+                $this->assertResponseCode(302, $key);
+                $this->configRequest(['headers' => ['Authorization' => 'Bearer ' . $token]]);
+                $this->get('/api/me');
+                $this->assertResponseCode(401, $key);
 
                 $this->exec('oauth check');
                 $this->assertOutputContains('[FAIL] Users integration');
-
-                // On the web the error stays, and names the setting.
-                try {
-                    $this->pluginRunningOn(false)->bootstrap($app);
-                    $this->fail('The web must refuse ' . $key);
-                } catch (InvalidArgumentException $e) {
-                    $this->assertStringContainsString('OAuthServer.users', $e->getMessage());
-                }
             }
         } finally {
             Configure::write('OAuthServer', $original);
             Configure::write('Auth.Authenticators', $authenticators);
+            OAuthServer::reset();
         }
     }
 
@@ -503,7 +506,7 @@ class UsersIntegrationTest extends TestCase
         $this->assertOutputContains('[WARN] Authenticators: the Session authenticator comes before the Token');
     }
 
-    public function testARootResourceWithoutExplicitPathsIsRefusedEarlyAndReported(): void
+    public function testARootResourceWithoutExplicitPathsRefusesTokensAndIsReported(): void
     {
         $authenticators = Configure::read('Auth.Authenticators');
         $original = Configure::read('OAuthServer');
@@ -517,30 +520,86 @@ class UsersIntegrationTest extends TestCase
             Configure::write('OAuthServer.users', ['resource' => 'http://localhost']);
             Configure::delete('Auth.Authenticators.OAuthServerToken');
             OAuthServer::reset();
+            $token = $this->oauthTokenFor($this->createUser()->get('id'), ['all'], 'http://localhost');
 
-            // The web fails at boot with a message that names the settings; the CLI skips the step.
-            try {
-                $this->pluginRunningOn(false)->bootstrap($app);
-                $this->fail('A root resource without paths must be refused at boot.');
-            } catch (InvalidArgumentException $e) {
-                $this->assertStringContainsString('OAuthServer.users.paths', $e->getMessage());
-                $this->assertStringContainsString('OAuthServer.tokenPaths', $e->getMessage());
-            }
-            $this->assertNull(Configure::read('Auth.Authenticators.OAuthServerToken'));
-            $this->pluginRunningOn(true)->bootstrap($app);
+            // Booting works; the authenticator, without paths for a root resource, refuses every token of this
+            // server instead of accepting it on every route.
+            (new OAuthServerPlugin())->bootstrap($app);
+            $this->assertNull(Configure::read('Auth.Authenticators.OAuthServerToken.paths'));
+            $this->get('/api/me');
+            $this->assertResponseEquals('{"error":"unauthorized"}');
+            $this->configRequest(['headers' => ['Authorization' => 'Bearer ' . $token]]);
+            $this->get('/api/me');
+            $this->assertResponseCode(401);
 
             $this->exec('oauth check');
             $this->assertOutputContains('[FAIL] Users integration');
             $this->assertOutputContains('OAuthServer.users.paths');
 
             // An explicit choice is accepted.
+            Configure::delete('Auth.Authenticators.OAuthServerToken');
             Configure::write('OAuthServer.users.paths', ['/']);
-            $this->pluginRunningOn(false)->bootstrap($app);
+            (new OAuthServerPlugin())->bootstrap($app);
             $this->assertSame(['/'], Configure::read('Auth.Authenticators.OAuthServerToken.paths'));
+            $this->configRequest(['headers' => ['Authorization' => 'Bearer ' . $token]]);
+            $this->get('/api/me');
+            $this->assertResponseOk();
         } finally {
             Configure::write('OAuthServer', $original);
             Configure::write('Auth.Authenticators', $authenticators);
             OAuthServer::reset();
+        }
+    }
+
+    public function testTheOneTimeTokenAuthenticatorNeverReadsTheTokensSentToTheOAuthEndpoints(): void
+    {
+        $this->assertSame(
+            'CakeDC/OAuthServer.UsersOneTimeToken',
+            Configure::read('Auth.Authenticators.OneTimeToken.className'),
+        );
+        $client = OAuthServer::server()->clientRegistrar()->create('App', ['https://app.example.com/cb'], false)['client'];
+        $driver = $this->fetchTable('CakeDC/Users.Users')->getConnection()->getDriver();
+        $log = new ArrayLog();
+        $driver->setLogger($log);
+        $driver->enableQueryLogging();
+        try {
+            // RFC 7009 and RFC 7662 name the parameter `token`, which is what cakedc/auth's one-time login reads.
+            $this->configRequest(['headers' => ['Content-Type' => 'application/x-www-form-urlencoded']]);
+            $this->post($this->prefix . '/revoke', ['token' => 'test_rt_SECRETREVOKE', 'client_id' => $client->clientId]);
+            $this->assertResponseOk();
+            $this->configRequest(['headers' => ['Content-Type' => 'application/x-www-form-urlencoded']]);
+            $this->post($this->prefix . '/introspect?token=test_rt_SECRETQUERY', ['token' => 'test_rt_SECRETINTROSPECT']);
+            $this->assertStringNotContainsString('SECRET', implode("\n", $log->read()));
+
+            // Elsewhere the one-time login link still works as cakedc/users intends. (cakedc/auth's authenticator
+            // calls a behavior method through the table, which CakePHP 5.3 deprecates; not this plugin's code.)
+            set_error_handler(fn(int $code): bool => $code === E_USER_DEPRECATED, E_USER_DEPRECATED);
+            try {
+                $this->get('/api/me?token=onetimelinkvalue');
+            } finally {
+                restore_error_handler();
+            }
+            $this->assertStringContainsString('onetimelinkvalue', implode("\n", $log->read()));
+        } finally {
+            $driver->disableQueryLogging();
+        }
+    }
+
+    public function testAnOneTimeTokenAuthenticatorOfTheApplicationIsLeftAlone(): void
+    {
+        $authenticators = Configure::read('Auth.Authenticators');
+        try {
+            Configure::write('Auth.Authenticators.OneTimeToken.className', 'Acme\\Mine\\OneTimeToken');
+            UsersIntegration::apply();
+            $this->assertSame('Acme\\Mine\\OneTimeToken', Configure::read('Auth.Authenticators.OneTimeToken.className'));
+
+            // Run directly: `exec()` boots cakedc/users again, which reloads its own configuration over this one.
+            $out = new StubConsoleOutput();
+            (new OAuthCheckCommand())->run([], new ConsoleIo($out, new StubConsoleOutput()));
+            $this->assertStringContainsString('[WARN] Users integration', implode("\n", $out->messages()));
+            $this->assertStringContainsString('one-time login', implode("\n", $out->messages()));
+        } finally {
+            Configure::write('Auth.Authenticators', $authenticators);
         }
     }
 }

@@ -12,8 +12,9 @@ return [
 ```
 
 The plugin reads the configuration through `CakeDC\OAuthServer\Config\PluginConfig`. Types are strict:
-numbers are integers (`3600`, not `'3600'`) and flags are `true` or `false`. An unknown key throws
-`InvalidArgumentException` that names it, so a typo is found at once.
+numbers are integers (`3600`, not `'3600'`) and flags are `true` or `false`. An unknown key is an error that
+names it, so a typo is found at once; it fails the OAuth parts only, see
+[an invalid configuration](#an-invalid-configuration).
 
 The keys come in two groups: **core keys**, handed to the core's `ServerConfig::fromArray()`, and
 **plugin keys**, which only the plugin reads.
@@ -178,7 +179,31 @@ named interface or `InvalidArgumentException` is thrown.
 - **table, displayField, login.url.** Taken from `CakeDC/Users` when it is loaded, see
   [cakedc-users](cakedc-users.md).
 - **Routing.** The route prefix and the metadata path are computed by the core, without touching the
-  secret, so a missing salt cannot break routing.
+  secret, so a missing salt does not move the routes. When the configuration is invalid the routes are still
+  connected: at `routePrefix` and at the metadata path of the issuer when each of them is valid on its own,
+  otherwise at `/oauth` and `/.well-known/oauth-authorization-server`.
+
+## An invalid configuration
+
+An invalid `OAuthServer` setting of any kind (an http issuer behind a TLS proxy, a resource declared with a
+string instead of an array, a `Security.salt` shorter than 32 characters without `OAuthServer.secret`, an
+unknown key, an invalid `users` or `tokenPaths` value) keeps the server from being built. It never takes the
+application down:
+
+| Where | What happens |
+| --- | --- |
+| Pages of the application, the login included | Work as usual |
+| The metadata document, `token`, `register`, `revoke`, `introspect` | `503` with `{"error": "temporarily_unavailable"}` and `Cache-Control: no-store` |
+| The consent and connections pages | `503`, rendered by your application's error page |
+| A request with a bearer token of this server (`<tokenPrefix>_at_`, `<tokenPrefix>_pat_`) | `401` from the Token authenticator, never passed on to the session |
+| `OAuthServer::csrfSkip()` | Still skips the client endpoints; never skips a bearer request |
+| `bin/cake`, migrations | Work as usual; `bin/cake oauth check` reports the setting to fix |
+
+Each refusal writes the reason to the `oauth` log scope (the setting to fix, never a token or the secret):
+look there first when OAuth answers 503 or every token gets 401. The Token authenticator and `csrfSkip()` read
+only the `tokenPrefix` setting until a request carries such a token, so a broken configuration costs other
+requests nothing. When `tokenPrefix` itself is not a string, every bearer token is treated as this server's and
+refused.
 
 ## A complete example
 

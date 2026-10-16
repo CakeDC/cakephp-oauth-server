@@ -78,8 +78,8 @@ jobs:
           extensions: curl, intl, pdo_sqlite, pdo_mysql, pdo_pgsql
           coverage: none
       - run: |
-          # "lowest" resolves to CakePHP 5.1.10: Composer refuses earlier 5.x releases because they carry
-          # security advisories, so that is the lowest release the plugin is tested with.
+          # "lowest" resolves to the declared floors, CakePHP 5.1.10 and cakephp/authentication 3.3.6 (earlier
+          # releases carry security advisories, so composer.json does not allow them).
           if [ "${{ matrix.dependencies }}" = "lowest" ]; then
             composer update --prefer-lowest --prefer-stable --no-interaction
           else

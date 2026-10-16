@@ -8,6 +8,8 @@ use Cake\Core\Configure;
 use Cake\Http\Middleware\CsrfProtectionMiddleware;
 use Cake\Http\ResponseFactory;
 use Cake\Http\StreamFactory;
+use Cake\Log\Engine\ArrayLog;
+use Cake\Log\Log;
 use Cake\ORM\TableRegistry;
 use Cake\Routing\RouteBuilder;
 use Cake\Routing\RouteCollection;
@@ -21,7 +23,6 @@ use CakeDC\OAuthServer\OAuthServer;
 use CakeDC\OAuthServer\OAuthServerPlugin;
 use CakeDC\OAuthServer\Test\Support\Fixtures;
 use CakeDC\OAuthServer\Test\Support\Html;
-use InvalidArgumentException;
 
 class OAuthControllerTest extends TestCase
 {
@@ -363,6 +364,37 @@ class OAuthControllerTest extends TestCase
         $this->assertHeader('Location', '/app/oauth/connections');
     }
 
+    public function testMalformedIdsOnTheConnectionsPageMatchNothing(): void
+    {
+        // On PostgreSQL, invalid UTF-8 in a query parameter fails the query: it used to answer 500 and log the SQL.
+        Log::setConfig('oauth_capture', ['className' => ArrayLog::class, 'scopes' => ['oauth']]);
+        try {
+            $this->exchange($this->code());
+            $this->signIn();
+            $this->get('/oauth/connections');
+            $fields = Html::hiddenFields((string)$this->_response->getBody(), 'family_id');
+            unset($fields['_csrfToken']);
+
+            foreach (["\xFF\xFE", 'not-a-uuid'] as $id) {
+                foreach ([['action' => 'revoke_connection', 'family_id' => $id], ['action' => 'revoke_token', 'token_id' => $id]] as $change) {
+                    $this->signIn();
+                    $this->enableCsrfToken();
+                    $this->post('/oauth/connections', $change + $fields);
+                    $this->assertResponseCode(303, bin2hex($id));
+                }
+            }
+
+            $engine = Log::engine('oauth_capture');
+            $this->assertInstanceOf(ArrayLog::class, $engine);
+            $this->assertSame([], $engine->read());
+            $this->signIn();
+            $this->get('/oauth/connections');
+            $this->assertResponseContains('Test App');
+        } finally {
+            Log::drop('oauth_capture');
+        }
+    }
+
     public function testUnderABasePathAnAnonymousVisitToTheConnectionsPageGoesToTheLoginOnce(): void
     {
         Configure::write('App.base', '/app');
@@ -543,28 +575,13 @@ class OAuthControllerTest extends TestCase
         );
     }
 
-    private function pluginRunningOn(bool $cli): OAuthServerPlugin
-    {
-        return new class ($cli) extends OAuthServerPlugin {
-            public function __construct(private readonly bool $cli)
-            {
-                parent::__construct();
-            }
-
-            protected function isCli(): bool
-            {
-                return $this->cli;
-            }
-        };
-    }
-
-    public function testWebRoutingDoesNotNeedTheSecret(): void
+    public function testRoutingDoesNotNeedTheSecret(): void
     {
         $salt = Security::getSalt();
         Security::setSalt('short');
         $collection = new RouteCollection();
         try {
-            $this->pluginRunningOn(false)->routes(new RouteBuilder($collection, '/'));
+            (new OAuthServerPlugin())->routes(new RouteBuilder($collection, '/'));
         } finally {
             Security::setSalt($salt);
         }
@@ -574,35 +591,32 @@ class OAuthControllerTest extends TestCase
         $this->assertContains('/oauth/token', $paths);
     }
 
-    public function testAnInvalidIssuerDoesNotBreakTheCommandLine(): void
+    public function testAnInvalidConfigurationStillConnectsTheRoutes(): void
     {
+        $routes = function (): array {
+            $collection = new RouteCollection();
+            (new OAuthServerPlugin())->routes(new RouteBuilder($collection, '/'));
+
+            return array_map(fn($route) => $route->template, $collection->routes());
+        };
+
+        // No issuer: the metadata document of an issuer without a path, so it answers 503 instead of 404.
         Configure::write('App.fullBaseUrl', false);
-        $collection = new RouteCollection();
-
-        $this->pluginRunningOn(true)->routes(new RouteBuilder($collection, '/'));
-
-        $paths = array_map(fn($route) => $route->template, $collection->routes());
+        $paths = $routes();
         $this->assertContains('/oauth/token', $paths);
-        $this->assertNotContains('/.well-known/oauth-authorization-server', $paths);
-    }
+        $this->assertContains('/.well-known/oauth-authorization-server', $paths);
 
-    public function testAnInvalidIssuerFailsAtBootNamingTheSetting(): void
-    {
-        $plugin = $this->pluginRunningOn(false);
-        Configure::write('App.fullBaseUrl', 'http://shop.example.com');
-        try {
-            $plugin->routes(new RouteBuilder(new RouteCollection(), '/'));
-            $this->fail('An insecure default issuer must not connect routes.');
-        } catch (InvalidArgumentException $e) {
-            $this->assertStringContainsString('App.fullBaseUrl', $e->getMessage());
-        }
+        // The issuer and the route prefix are read on their own when something else is broken.
+        Configure::write('App.fullBaseUrl', $this->baseUrl);
+        $this->configure(['routePrefix' => '/auth', 'issuer' => 'http://localhost/app', 'tokenPrefix' => 'Not Valid!']);
+        Configure::write('OAuthServer.resources', ['http://localhost/api' => 'Test API']);
+        $paths = $routes();
+        $this->assertContains('/auth/token', $paths);
+        $this->assertContains('/auth/connections', $paths);
+        $this->assertContains('/.well-known/oauth-authorization-server/app', $paths);
 
-        $this->configure(['issuer' => 'http://shop.example.com']);
-        try {
-            $plugin->routes(new RouteBuilder(new RouteCollection(), '/'));
-            $this->fail('An insecure issuer must not connect routes.');
-        } catch (InvalidArgumentException $e) {
-            $this->assertStringContainsString('OAuthServer.issuer', $e->getMessage());
-        }
+        // A route prefix the core refuses falls back to /oauth.
+        $this->configure(['routePrefix' => 'no slash']);
+        $this->assertContains('/oauth/token', $routes());
     }
 }

@@ -92,3 +92,6 @@ msgstr ""
 
 msgid "Create token"
 msgstr ""
+
+msgid "The authorization service is not available right now. Try again later."
+msgstr ""

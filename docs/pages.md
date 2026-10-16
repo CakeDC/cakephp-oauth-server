@@ -99,6 +99,13 @@ the layout to work without JavaScript.
 `OAuthServer::pageCsp(bool $connections = false)` returns the policy the controller applies (`null` when
 the page uses the plugin's own layout). Use it if you render the pages yourself.
 
+A Content-Security-Policy middleware of your application runs after the controller and changes this header.
+Cake's `CspMiddleware` adds its policy next to the page's (`withAddedHeader()`): browsers enforce both, so the
+pages keep `frame-ancestors 'none'` but lose what your policy does not allow (inline styles, for example). A
+middleware that sets the header with `withHeader()` replaces the page's policy and drops `frame-ancestors
+'none'` and the other restrictions. Skip such a middleware on the plugin's routes, or keep the header when one is
+already set.
+
 ## Translations
 
 Interface strings are English in the templates and go through `__d('oauth_server', ...)`. The plugin ships

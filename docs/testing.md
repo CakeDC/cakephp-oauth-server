@@ -66,6 +66,10 @@ class PostsControllerTest extends TestCase
 - The token is a personal token built through the public connection service, valid for one day. That
   means `OAuthServer.personalTokens` must be `true` in the test configuration; with `false` the trait
   throws `LogicException` with a clear message.
+- A personal token has no client: `OAuthServer::token($request)->client` is `null` for it. Code that depends on
+  the client (its name, its id) cannot be tested with the trait; issue a token through a real client for that
+  (the OAuth flow, or `OAuthServer::server()->tokenIssuer()->issue()` with a client created through
+  `clientRegistrar()`).
 - The header applies to the **next request only**: IntegrationTestTrait clears request headers after
   sending. Call `withOAuthToken()` or `actAsOAuth()` again before each request. A second call replaces the
   token instead of sending two `Authorization` values.

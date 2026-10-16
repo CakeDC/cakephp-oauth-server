@@ -9,6 +9,7 @@ use Authentication\AuthenticationServiceProviderInterface;
 use Cake\Http\BaseApplication;
 use Cake\Http\Middleware\CsrfProtectionMiddleware;
 use Cake\Http\MiddlewareQueue;
+use Cake\Routing\Middleware\RoutingMiddleware;
 use CakeDC\OAuthServer\OAuthServer;
 use Psr\Http\Message\ServerRequestInterface;
 
@@ -30,6 +31,7 @@ abstract class CheckApplication extends BaseApplication implements Authenticatio
      */
     public function middleware(MiddlewareQueue $middlewareQueue): MiddlewareQueue
     {
+        $middlewareQueue->add(new RoutingMiddleware($this));
         if ($this->withCsrf()) {
             $csrf = new CsrfProtectionMiddleware();
             $csrf->skipCheckCallback(fn(ServerRequestInterface $request): bool => OAuthServer::csrfSkip($request));

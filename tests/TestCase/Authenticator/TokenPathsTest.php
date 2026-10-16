@@ -319,9 +319,15 @@ class TokenPathsTest extends TestCase
             'defaultScopes' => ['all'],
         ]]);
         OAuthServer::reset();
+        $token = $this->oauthTokenFor(1, ['all'], 'http://localhost');
+        $request = Routed::request('/account/delete', '/{tenant}/account/delete')
+            ->withHeader('Authorization', 'Bearer ' . $token);
 
+        // Built without complaint, it refuses this server's tokens everywhere and oauth check names the setting.
+        $authenticator = new TokenAuthenticator(new IdentifierCollection(), []);
+        $this->assertFalse($authenticator->authenticate($request)->isValid());
         try {
-            new TokenAuthenticator(new IdentifierCollection(), []);
+            $authenticator->resolve();
             $this->fail('A root resource without paths must be refused.');
         } catch (InvalidArgumentException $e) {
             $this->assertStringContainsString('"paths"', $e->getMessage());
@@ -329,17 +335,21 @@ class TokenPathsTest extends TestCase
         }
 
         $authenticator = new TokenAuthenticator(new IdentifierCollection(), ['paths' => ['/']]);
-        $token = $this->oauthTokenFor(1, ['all'], 'http://localhost');
-        $request = Routed::request('/account/delete', '/{tenant}/account/delete')
-            ->withHeader('Authorization', 'Bearer ' . $token);
         $this->assertTrue($authenticator->authenticate($request)->isValid());
     }
 
     public function testInvalidPathsAreRefused(): void
     {
+        $token = $this->oauthTokenFor(1, ['api'], 'http://localhost/api');
         foreach ([[], ['api'], [''], [1], ['/a/../b'], 'api'] as $paths) {
+            $authenticator = new TokenAuthenticator(new IdentifierCollection(), [
+                'resource' => 'http://localhost/api',
+                'paths' => $paths,
+            ]);
+            $request = Routed::request('/api/me', '/api/me')->withHeader('Authorization', 'Bearer ' . $token);
+            $this->assertFalse($authenticator->authenticate($request)->isValid(), json_encode($paths));
             try {
-                new TokenAuthenticator(new IdentifierCollection(), ['resource' => 'http://localhost/api', 'paths' => $paths]);
+                $authenticator->resolve();
                 $this->fail('Refused: ' . json_encode($paths));
             } catch (InvalidArgumentException $e) {
                 $this->assertStringContainsString('"paths"', $e->getMessage());

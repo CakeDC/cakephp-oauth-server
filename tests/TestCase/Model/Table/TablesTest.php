@@ -133,7 +133,8 @@ class TablesTest extends TestCase
         $clients = $this->getTableLocator()->get('CakeDC/OAuthServer.OauthClients');
         $this->assertInstanceOf(OauthClientsTable::class, $clients);
         $now = new DateTime('2026-01-01 00:00:00');
-        $entity = $clients->newEntity([
+        $entity = $clients->newEmptyEntity();
+        $clients->patchEntity($entity, [
             'id' => '6f1c2f0a-0000-4000-8000-000000000001',
             'client_id' => 'abc',
             'client_id_hash' => hash('sha256', 'abc'),
@@ -148,12 +149,43 @@ class TablesTest extends TestCase
             'metadata' => ['nested' => ['a' => 1]],
             'created' => $now,
             'modified' => $now,
-        ]);
+        ], ['accessibleFields' => ['*' => true]]);
         $clients->saveOrFail($entity);
 
         $loaded = $clients->get('6f1c2f0a-0000-4000-8000-000000000001');
         $this->assertSame(['https://app.example.com/cb'], $loaded->get('redirect_uris'));
         $this->assertSame(['nested' => ['a' => 1]], $loaded->get('metadata'));
         $this->assertNull($loaded->get('scopes'));
+    }
+
+    public function testNoFieldIsMassAssignableAndTheHashesAreHidden(): void
+    {
+        $hashes = [
+            'CakeDC/OAuthServer.OauthClients' => 'secret_hash',
+            'CakeDC/OAuthServer.OauthAuthorizationCodes' => 'code_hash',
+            'CakeDC/OAuthServer.OauthTokens' => 'token_hash',
+            'CakeDC/OAuthServer.OauthConsents' => null,
+        ];
+        foreach ($hashes as $alias => $hash) {
+            $table = $this->getTableLocator()->get($alias);
+            // What an admin screen built on these tables would pass from a form.
+            $data = ['subject' => 'mallory', 'revoked_at' => null, 'scopes' => ['admin'], 'id' => 'x'];
+            if ($hash !== null) {
+                $data[$hash] = 'injected';
+            }
+            $entity = $table->newEntity($data);
+            foreach (array_keys($data) as $field) {
+                $this->assertFalse($entity->isAccessible($field), "{$alias}.{$field}");
+                $this->assertNull($entity->get($field), "{$alias}.{$field}");
+            }
+            if ($hash === null) {
+                continue;
+            }
+            $entity = $table->newEmptyEntity();
+            $entity->set($hash, 'stored-hash');
+            $entity->set('name', 'visible');
+            $this->assertArrayNotHasKey($hash, $entity->toArray(), $alias);
+            $this->assertStringNotContainsString('stored-hash', (string)json_encode($entity), $alias);
+        }
     }
 }

@@ -6,9 +6,14 @@
 composer require cakedc/cakephp-oauth-server
 ```
 
-This also installs the core library `cakedc/oauth-server`. The plugin needs PHP 8.2+, CakePHP 5.0 or later
-(CI tests from 5.1.10, the lowest release Composer installs because earlier 5.x releases carry security
-advisories), `cakephp/authentication` 3.x and `cakephp/migrations` 4 or 5.
+This also installs the core library `cakedc/oauth-server`. The plugin needs PHP 8.2+, CakePHP 5.1.10 or later,
+`cakephp/authentication` 3.3.6 or later and `cakephp/migrations` 4 or 5.
+
+Those floors are the oldest releases without published security advisories. Earlier CakePHP 5 releases and
+`cakephp/authentication` before 3.3.6 have advisories, and Composer refuses to install them by default; one of
+them is an open redirect through the `redirect` parameter of the login (PKSA-bz6x-t8z8-r26p), which is exactly
+how the consent page sends an anonymous person to sign in and back. So the plugin does not declare support for
+them.
 
 ## Load the plugin
 
@@ -32,11 +37,13 @@ Loading the plugin does these things:
 - puts the core `AuthorizationServer` in the application's container, so controllers and commands can type-hint
   it (it is the same object as `OAuthServer::server()`);
 - if `CakeDC/Users` is loaded, applies the [cakedc/users integration](cakedc-users.md). Load `CakeDC/Users`
-  before this plugin.
+  before this plugin (see [why](cakedc-users.md#plugin-order)).
 
-A broken configuration (an invalid issuer or route prefix) fails at boot on web requests with an error
-that names the setting. On the command line the routes fall back to `/oauth` so `bin/cake` keeps working
-and `bin/cake oauth check` reports the problem.
+A broken `OAuthServer` configuration (an invalid issuer, a resource declared with a string, a short
+`Security.salt`, an unknown key) never takes the application down. Its pages, the login included, and
+`bin/cake` keep working, while everything OAuth fails closed: the plugin's routes answer 503 and log the
+reason, and a token of this server gets 401. `bin/cake oauth check` names the setting to fix. See
+[configuration](configuration.md#an-invalid-configuration).
 
 ## Migrations
 
@@ -113,8 +120,11 @@ empty segment (`//`) or `.` / `..` segments is never skipped, and a token presen
 
 Add `CsrfProtectionMiddleware` after `RoutingMiddleware`, as above and in the CakePHP application skeleton.
 Before routing there is no matched route, so a bearer request is never skipped there (the client endpoints
-still are). `csrfSkip()` never throws: when the `OAuthServer` configuration cannot be read it skips nothing,
-and when the server cannot be built to validate a token it does not skip that bearer request.
+still are). `csrfSkip()` never throws. The client endpoints are skipped with any configuration, a broken one
+included (they answer 503 then), because they are found where the plugin connected their routes. Only a request
+with a bearer token of this server within the token paths builds the server, to validate the token; when the
+configuration cannot be read or the server cannot be built, that request is not skipped and a warning goes to
+the `oauth` log.
 
 Everything else stays CSRF checked: session routes, requests with no bearer or a foreign one, and the
 consent and connections pages (`<prefix>/authorize` and `<prefix>/connections` are never skipped, even with
@@ -124,8 +134,10 @@ same page). Never disable CSRF protection globally.
 A global `CsrfProtectionMiddleware` also sets a `csrfToken` cookie on the metadata response, which is
 publicly cacheable. Either scope CSRF away from `/.well-known` or accept the cookie.
 
-`bin/cake oauth check` inspects your middleware and fails when the callback does not skip the token
-endpoint.
+`bin/cake oauth check` inspects your middleware (`CsrfProtectionMiddleware` or
+`SessionCsrfProtectionMiddleware`): it fails when the callback does not skip the token endpoint or when it also
+skips the consent page, the connections page, the home page or the login, and warns when the CSRF or the
+authentication middleware runs before `RoutingMiddleware`.
 
 ## Routes
 
