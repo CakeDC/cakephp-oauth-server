@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace CakeDC\OAuthServer;
 
+use Cake\Console\CommandCollection;
 use Cake\Core\BasePlugin;
 use Cake\Core\ContainerInterface;
 use Cake\Core\PluginApplicationInterface;
@@ -11,6 +12,12 @@ use Cake\Log\Engine\FileLog;
 use Cake\Log\Log;
 use Cake\Routing\RouteBuilder;
 use CakeDC\OAuth\Server\AuthorizationServer;
+use CakeDC\OAuthServer\Command\OAuthCheckCommand;
+use CakeDC\OAuthServer\Command\OAuthClientAddCommand;
+use CakeDC\OAuthServer\Command\OAuthClientListCommand;
+use CakeDC\OAuthServer\Command\OAuthClientRevokeCommand;
+use CakeDC\OAuthServer\Command\OAuthPruneCommand;
+use CakeDC\OAuthServer\Command\OAuthTokenRevokeCommand;
 use CakeDC\OAuthServer\Config\PluginConfig;
 use CakeDC\OAuthServer\I18n\PluginMessagesLoader;
 
@@ -86,5 +93,22 @@ class OAuthServerPlugin extends BasePlugin
         foreach (['authorize', 'token', 'register', 'revoke', 'introspect', 'connections'] as $action) {
             $routes->connect($config->routePrefix() . '/' . $action, $defaults + ['action' => $action]);
         }
+    }
+
+    /**
+     * Registers the `oauth` commands.
+     *
+     * @param \Cake\Console\CommandCollection $commands The collection.
+     * @return \Cake\Console\CommandCollection
+     */
+    public function console(CommandCollection $commands): CommandCollection
+    {
+        return $commands
+            ->add('oauth client add', OAuthClientAddCommand::class)
+            ->add('oauth client list', OAuthClientListCommand::class)
+            ->add('oauth client revoke', OAuthClientRevokeCommand::class)
+            ->add('oauth token revoke', OAuthTokenRevokeCommand::class)
+            ->add('oauth prune', OAuthPruneCommand::class)
+            ->add('oauth check', OAuthCheckCommand::class);
     }
 }
