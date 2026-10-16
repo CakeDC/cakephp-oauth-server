@@ -305,13 +305,36 @@ class CommandsTest extends TestCase
         $this->assertOutputContains('family_started_at');
     }
 
-    public function testCheckReportsLoggingAndTheTablesHint(): void
+    public function testCheckReportsTheLoggingEngine(): void
     {
         $this->exec('oauth check');
-        $this->assertOutputContains('Logging');
 
-        $configured = Log::configured();
-        $this->assertContains('oauth', $configured);
+        $this->assertOutputContains('[PASS] Logging: the "oauth" log engine is configured');
+    }
+
+    public function testCheckHintsAtCopyingTheMigrationWhenATableIsMissing(): void
+    {
+        $connection = ConnectionManager::get('default');
+        $connection->execute('ALTER TABLE oauth_consents RENAME TO oauth_consents_gone');
+        try {
+            $this->exec('oauth check');
+        } finally {
+            $connection->execute('ALTER TABLE oauth_consents_gone RENAME TO oauth_consents');
+        }
+
+        $this->assertExitError();
+        $this->assertOutputContains('[FAIL] Tables: missing oauth_consents; copy the plugin migration');
+    }
+
+    public function testListShowsClientNamesLiterally(): void
+    {
+        $name = '<error>boom</error> <text-right>x</text-right> tail';
+        OAuthServer::server()->clientRegistrar()->create($name, ['https://app.example.com/cb'], false);
+
+        $this->exec('oauth client list');
+
+        $this->assertExitSuccess();
+        $this->assertOutputContains($name);
     }
 
     public function testCheckWarnsWhenNoEngineHandlesTheOauthScope(): void

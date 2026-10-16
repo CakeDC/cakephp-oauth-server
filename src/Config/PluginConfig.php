@@ -123,8 +123,8 @@ final class PluginConfig
     }
 
     /**
-     * Like routing(), but never throws: an invalid setting leaves the metadata path null and falls back to
-     * the configured prefix, or `/oauth` when that is invalid too. For the CLI, where `oauth check` reports.
+     * Like routing(), but never throws: an invalid setting leaves the metadata path null and the prefix at
+     * `/oauth`. For the CLI, where `oauth check` reports the problem.
      *
      * @return array{prefix: string, metadata: string|null}
      */
@@ -133,10 +133,7 @@ final class PluginConfig
         try {
             return $this->routing();
         } catch (InvalidArgumentException) {
-            $prefix = $this->settings['routePrefix'] ?? '/oauth';
-            $valid = is_string($prefix) && preg_match('#^(/[A-Za-z0-9._~-]+)+\z#', $prefix) === 1;
-
-            return ['prefix' => $valid ? $prefix : '/oauth', 'metadata' => null];
+            return ['prefix' => '/oauth', 'metadata' => null];
         }
     }
 

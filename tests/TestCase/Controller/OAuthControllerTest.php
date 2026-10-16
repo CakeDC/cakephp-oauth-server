@@ -13,6 +13,7 @@ use Cake\Routing\RouteBuilder;
 use Cake\Routing\RouteCollection;
 use Cake\TestSuite\IntegrationTestTrait;
 use Cake\TestSuite\TestCase;
+use Cake\Utility\Security;
 use CakeDC\OAuth\Server\Client\Client;
 use CakeDC\OAuth\Server\Grant\Pkce;
 use CakeDC\OAuth\Server\Http\HttpResponder;
@@ -533,6 +534,22 @@ class OAuthControllerTest extends TestCase
                 return $this->cli;
             }
         };
+    }
+
+    public function testWebRoutingDoesNotNeedTheSecret(): void
+    {
+        $salt = Security::getSalt();
+        Security::setSalt('short');
+        $collection = new RouteCollection();
+        try {
+            $this->pluginRunningOn(false)->routes(new RouteBuilder($collection, '/'));
+        } finally {
+            Security::setSalt($salt);
+        }
+
+        $paths = array_map(fn($route) => $route->template, $collection->routes());
+        $this->assertContains('/.well-known/oauth-authorization-server', $paths);
+        $this->assertContains('/oauth/token', $paths);
     }
 
     public function testAnInvalidIssuerDoesNotBreakTheCommandLine(): void
