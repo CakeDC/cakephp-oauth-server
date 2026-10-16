@@ -5,6 +5,7 @@ namespace CakeDC\OAuthServer\Test\TestCase\View;
 
 use Cake\Http\ServerRequest;
 use Cake\I18n\I18n;
+use Cake\I18n\Package;
 use Cake\Routing\Router;
 use Cake\TestSuite\TestCase;
 use CakeDC\OAuth\Server\Client\ApplicationType;
@@ -111,7 +112,9 @@ class RenderersTest extends TestCase
             'scopes' => ['content:read' => 'Read your posts', 'files.read' => 'Read <files>'],
         ]];
 
-        return (new CakeConnectionsRenderer($request ?? new ServerRequest(), null))->render(new ConnectionsView(
+        $request ??= (new ServerRequest())->withAttribute('csrfToken', 'csrf-value');
+
+        return (new CakeConnectionsRenderer($request, null))->render(new ConnectionsView(
             new ResourceOwner('1', 'Ada'),
             $connections,
             $tokens,
@@ -225,7 +228,6 @@ class RenderersTest extends TestCase
             $html,
         );
         $this->assertStringNotContainsString('Stay connected', $html);
-        $this->assertStringNotContainsString('Stay connected', $this->consent($client, false));
         $this->assertStringContainsString('Stay connected', $this->consent($client, true));
     }
 
@@ -258,10 +260,79 @@ class RenderersTest extends TestCase
     /**
      * @return void
      */
-    public function testScopeDescriptionsAreTranslatedAtRenderTime(): void
+    public function testScopeDescriptionsAreTranslatedAtRenderTimeInTheDefaultDomain(): void
+    {
+        $package = new Package('default');
+        $package->setMessages(['Read your posts' => 'Lee tus publicaciones']);
+        I18n::setTranslator('default', fn(): Package => $package, 'fr');
+
+        $this->assertStringContainsString('Lee tus publicaciones', $this->withLocale('fr', fn() => $this->consent()));
+        $this->assertStringContainsString('Read your posts', $this->consent());
+        $this->assertStringContainsString(
+            'Lee tus publicaciones',
+            $this->withLocale('fr', fn() => $this->connections()),
+        );
+    }
+
+    /**
+     * @return void
+     */
+    public function testPluginStringsAreTranslated(): void
     {
         $this->assertStringContainsString('Autorizar a', $this->withLocale('es', fn() => $this->consent()));
         $this->assertStringContainsString('Seguir conectada', $this->withLocale('es', fn() => $this->consent()));
+    }
+
+    /**
+     * @return void
+     */
+    public function testTheAppsPoFileOverridesThePluginMessages(): void
+    {
+        $html = $this->withLocale('pt', fn() => $this->consent());
+
+        $this->assertStringContainsString('Permitir (app)', $html);
+        $this->assertStringContainsString('Deny', $html);
+    }
+
+    /**
+     * @return void
+     */
+    public function testAnAppLayoutThatPrintsTheTitleRawCannotBeInjected(): void
+    {
+        $name = '</title><h1>Your Bank</h1><form action="https://evil.example">';
+        $client = $this->client(ClientType::Dynamic, 'abc', $name);
+        $request = (new ServerRequest())->withAttribute('csrfToken', 'csrf-value');
+        $html = (new CakeConsentRenderer($request, 'raw_title'))->render(new ConsentView(
+            $client,
+            new ResourceOwner('1', 'Ada'),
+            $this->resource(),
+            ['content:read' => 'Read your posts'],
+            false,
+            self::CALLBACK,
+            '/oauth/authorize',
+            ['client_id' => 'abc'],
+        ));
+
+        $this->assertStringNotContainsString('<h1>Your Bank', $html);
+        $this->assertStringNotContainsString('<form action="https://evil.example"', $html);
+        $this->assertStringContainsString('&lt;/title&gt;&lt;h1&gt;Your Bank&lt;/h1&gt;', $html);
+        $this->assertSame(1, substr_count($html, '<title>'));
+        $this->assertSame(1, substr_count($html, '<form '));
+
+        $error = (new CakeErrorPageRenderer($request, 'raw_title'))->render(OAuthException::invalidRequest('x'));
+        $this->assertStringContainsString('<title>Authorization failed</title>', $error);
+        $connections = (new CakeConnectionsRenderer($request, 'raw_title'))->render(new ConnectionsView(
+            new ResourceOwner('1', 'Ada'),
+            [],
+            [],
+            [],
+            [],
+            '/oauth/connections',
+            'f',
+            90,
+            false,
+        ));
+        $this->assertStringContainsString('<title>Connected applications</title>', $connections);
     }
 
     /**
@@ -318,6 +389,7 @@ class RenderersTest extends TestCase
         $this->assertStringContainsString('Read &lt;files&gt;', $html);
         $fields = Html::hiddenFields($html, 'action');
         $this->assertSame('create_token', $fields['action']);
+        $this->assertSame('csrf-value', $fields['_csrfToken']);
         $this->assertSame('form-token', $fields['form_token']);
         $this->assertStringContainsString('name="name"', $html);
         $this->assertStringContainsString('name="resource"', $html);
@@ -347,6 +419,8 @@ class RenderersTest extends TestCase
         $this->assertSame('revoke_token', Html::hiddenFields($html, 'token_id')['action']);
         $this->assertSame('tok-1', Html::hiddenFields($html, 'token_id')['token_id']);
         $this->assertSame('form-token', Html::hiddenFields($html, 'token_id')['form_token']);
+        $this->assertSame('csrf-value', Html::hiddenFields($html, 'family_id')['_csrfToken']);
+        $this->assertSame('csrf-value', Html::hiddenFields($html, 'token_id')['_csrfToken']);
     }
 
     /**

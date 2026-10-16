@@ -12,7 +12,7 @@ $language = substr((string)I18n::getLocale(), 0, 2);
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title><?= h($this->fetch('title')) ?></title>
+    <title><?= $this->fetch('title') ?></title>
     <style>
         body{font-family:system-ui,sans-serif;background:#f6f7f9;color:#1d2330;margin:0}
         main{max-width:42rem;margin:3rem auto;background:#fff;padding:2rem;border-radius:12px;

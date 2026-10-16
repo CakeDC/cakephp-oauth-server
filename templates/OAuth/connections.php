@@ -6,7 +6,7 @@
 
 use CakeDC\OAuth\Server\Client\ClientType;
 
-$this->assign('title', __d('oauth_server', 'Connected applications'));
+$this->assign('title', h(__d('oauth_server', 'Connected applications')));
 $date = fn(?DateTimeInterface $value): string => $value === null
     ? __d('oauth_server', 'Never')
     : $value->format('Y-m-d H:i') . ' UTC';

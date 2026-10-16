@@ -12,7 +12,7 @@ $clientHost = $consent->clientHost();
 $clientName = $consent->client->type === ClientType::MetadataDocument && $clientHost !== ''
     ? $clientHost
     : $consent->client->name;
-$this->assign('title', __d('oauth_server', 'Authorize {0}', $clientName));
+$this->assign('title', h(__d('oauth_server', 'Authorize {0}', $clientName)));
 ?>
 <h1><?= h(__d('oauth_server', '{0} wants to access {1}', $clientName, $consent->resource->name)) ?></h1>
 <p class="oauth-muted"><?= h(__d(

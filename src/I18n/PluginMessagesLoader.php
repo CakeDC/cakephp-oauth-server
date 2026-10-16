@@ -7,7 +7,9 @@ use Cake\I18n\I18n;
 use Cake\I18n\MessagesFileLoader;
 use Cake\I18n\Package;
 use Cake\I18n\Parser\PoFileParser;
+use Cake\I18n\TranslatorRegistry;
 use Locale;
+use ReflectionProperty;
 
 /**
  * Loads the plugin's `oauth_server` translation domain: the plugin's own `.po` file, overridden message by
@@ -27,6 +29,11 @@ final class PluginMessagesLoader
      */
     public static function register(): void
     {
+        // An application that registered its own loader for the domain keeps it.
+        $loaders = (new ReflectionProperty(TranslatorRegistry::class, '_loaders'))->getValue(I18n::translators());
+        if (is_array($loaders) && isset($loaders[self::DOMAIN]) && !$loaders[self::DOMAIN] instanceof self) {
+            return;
+        }
         I18n::translators()->registerLoader(self::DOMAIN, new self());
     }
 
@@ -53,9 +60,13 @@ final class PluginMessagesLoader
         $package = new Package('default');
         $package->setMessages($messages);
 
-        $app = (new MessagesFileLoader(self::DOMAIN, $locale, 'po'))();
-        if ($app instanceof Package) {
-            $package->addMessages($app->getMessages());
+        // The application's override files, .mo before .po as Cake's own loader does.
+        foreach (['mo', 'po'] as $extension) {
+            $app = (new MessagesFileLoader(self::DOMAIN, $locale, $extension))();
+            if ($app instanceof Package) {
+                $package->addMessages($app->getMessages());
+                break;
+            }
         }
 
         return $package;

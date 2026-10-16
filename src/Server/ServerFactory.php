@@ -70,16 +70,25 @@ final class ServerFactory
             consentRenderer: new CakeConsentRenderer($request, $this->config->consentLayout()),
             connectionsRenderer: new CakeConnectionsRenderer($request, $this->config->connectionsLayout()),
             errorPageRenderer: new CakeErrorPageRenderer($request, $this->config->consentLayout()),
-            clientIp: static function (ServerRequestInterface $r): string {
-                if (!$r instanceof ServerRequest) {
-                    return ClientIp::fromServerParams($r);
-                }
-                $ip = $r->clientIp();
-
-                // Cake answers '' without REMOTE_ADDR (CLI, integration tests); the core uses 'unknown'.
-                return $ip !== '' ? $ip : 'unknown';
-            },
+            clientIp: self::clientIp(...),
         );
+    }
+
+    /**
+     * The client address used for rate limiting: Cake's, or 'unknown' where Cake has none.
+     *
+     * @param \Psr\Http\Message\ServerRequestInterface $request The request.
+     * @return string
+     */
+    public static function clientIp(ServerRequestInterface $request): string
+    {
+        if (!$request instanceof ServerRequest) {
+            return ClientIp::fromServerParams($request);
+        }
+        $ip = $request->clientIp();
+
+        // Cake answers '' without REMOTE_ADDR (CLI, integration tests); the core uses 'unknown'.
+        return $ip !== '' ? $ip : 'unknown';
     }
 
     /**
