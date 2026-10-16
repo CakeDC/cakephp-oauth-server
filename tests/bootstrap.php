@@ -3,8 +3,10 @@ declare(strict_types=1);
 
 use Cake\Cache\Cache;
 use Cake\Core\Configure;
+use Cake\Core\Plugin;
 use Cake\Datasource\ConnectionManager;
 use Cake\Utility\Security;
+use CakeDC\OAuthServer\OAuthServerPlugin;
 use Migrations\TestSuite\Migrator;
 
 if (!defined('DS')) {
@@ -83,7 +85,5 @@ Configure::write('OAuthServer', [
     'rateLimit' => ['cache' => null],
 ]);
 
-// Task 2 replaces this block once the plugin has migrations.
-if (glob($pluginRoot . '/config/Migrations/*.php')) {
-    (new Migrator())->runMany([['plugin' => 'CakeDC/OAuthServer'], []]);
-}
+Plugin::getCollection()->add(new OAuthServerPlugin());
+(new Migrator())->runMany([['plugin' => 'CakeDC/OAuthServer'], []]);
