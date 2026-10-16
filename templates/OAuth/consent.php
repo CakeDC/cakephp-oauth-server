@@ -12,10 +12,11 @@ use CakeDC\OAuthServer\View\QuotedName;
 // self-registered client's answer goes to), or a fixed text when no host names it (a private-use redirect).
 $label = $consent->clientLabel();
 $client = $label !== '' ? $label : __d('oauth_server', 'An application on this computer');
+$local = false;
 $from = $consent->clientHost() !== '' ? $consent->clientHost() : $consent->redirectHost();
 if ($consent->client->type === ClientType::Dynamic && $consent->clientHost() === '') {
     // The scheme of a private-use redirect is chosen by the client: it is shown only as the destination.
-    $from = $client;
+    $local = true;
 }
 // The name the client declared, as an unverified quote whose boundary is markup.
 $declared = $consent->declaredName() === null ? null : QuotedName::html(
@@ -25,7 +26,11 @@ $declared = $consent->declaredName() === null ? null : QuotedName::html(
 $this->assign('title', h(__d('oauth_server', 'Authorize {0}', $client)));
 ?>
 <h1><?= h(__d('oauth_server', '{0} wants to access {1}', $client, $consent->resource->name)) ?></h1>
-<p class="oauth-muted"><?= h(__d(
+<p class="oauth-muted"><?= h($local ? __d(
+    'oauth_server',
+    'The request comes from an application on this computer. Your answer is sent to {0}.',
+    $consent->redirectHost(),
+) : __d(
     'oauth_server',
     'The request comes from {0}. Your answer is sent to {1}.',
     $from,

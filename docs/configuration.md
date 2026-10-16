@@ -55,7 +55,9 @@ Behaviour behind these keys that is worth knowing before production:
 - **Private-use schemes are off.** `registration.allowPrivateSchemes` is `false`: dynamic registration and
   metadata documents accept https and loopback http redirect URIs only, as the MCP authorization spec requires.
   Set it to `true` for native clients that redirect to a scheme such as `com.example.app:/oauth/callback`; the
-  consent page then calls such a self-registered client "An application on this computer" and asks every time.
+  consent page then calls such a self-registered client "An application on this computer". A public one
+  (`token_endpoint_auth_method` `none`) sees the page on every connection; a confidential one (the default of a
+  registration that omits the method) with a remembered consent skips it.
   Clients you add with `oauth client add` may always use such schemes. A dynamic registration without
   `application_type` is `native` when none of its redirect URIs is https; one that says `"web"` cannot register
   loopback http.

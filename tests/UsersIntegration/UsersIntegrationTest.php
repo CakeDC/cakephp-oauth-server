@@ -177,7 +177,11 @@ class UsersIntegrationTest extends TestCase
         // Anonymous: cakedc/users' login, with the request to come back to.
         $this->get($this->prefix . '/authorize?' . $query);
         $this->assertRedirectContains('/login?redirect=');
-        $this->assertStringNotContainsString('evil.example/login?', $this->_response->getHeaderLine('Location'));
+        // The return address is percent-encoded in the Location: compare the decoded value.
+        $location = rawurldecode($this->_response->getHeaderLine('Location'));
+        $this->assertStringContainsString('/login?redirect=', $location);
+        $this->assertStringNotContainsString('evil.example/login?', $location);
+        $this->assertStringNotContainsString('://evil.example', explode('/login?', $location)[0]);
 
         // Signed in: a page that names the destination, and no redirect.
         $this->session(['Auth' => $user]);

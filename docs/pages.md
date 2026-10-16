@@ -54,8 +54,9 @@ rules:
   computer". Never headline a self-registered client by `client->name` or by `clientHost()` of a redirect URI it
   merely listed: both are its own choice.
 - **The "from" line** uses `clientHost()`, or `redirectHost()` when it is empty, except for a self-registered
-  client with a private-use redirect, which gets the same fixed text as its heading: the scheme says only where
-  the answer goes.
+  client with a private-use redirect, which gets the core's `consent.fromLocal` text ("The request comes from an
+  application on this computer. Your answer is sent to ..."): the scheme says only where the answer goes, and
+  `redirectHost()` prints it with its colon (`claude.ai:`).
 - **Show `declaredName()` only as a quote.** When it is not `null` (a self-registered client whose name differs
   from its label), print it as an unverified secondary line with the name inside a `<q>` element, never between
   quote characters, so a name such as `Claude". Verified publisher. "` cannot close the quote and go on as if the

@@ -15,6 +15,7 @@ use Cake\Log\Log;
 use Cake\Routing\Router;
 use Cake\TestSuite\TestCase;
 use Cake\Utility\Security;
+use CakeDC\OAuth\Server\Client\ApplicationType;
 use CakeDC\OAuth\Server\Grant\AuthorizationCode;
 use CakeDC\OAuth\Server\Grant\Consent;
 use CakeDC\OAuth\Server\Support\Time;
@@ -664,6 +665,27 @@ class CommandsTest extends TestCase
 
         $this->assertExitSuccess();
         $this->assertOutputContains($name);
+    }
+
+    public function testListShowsTheWebHostsOfAClientBesideItsDeclaredName(): void
+    {
+        $registrar = OAuthServer::server()->clientRegistrar();
+        $registrar->create('Claude', ['https://app.example.com/cb', 'https://other.example.org/cb'], false);
+        $registrar->create('Native', ['com.example.app:/cb'], false, applicationType: ApplicationType::Native);
+        $registrar->create(
+            'Mixed',
+            ['https://mixed.example.net/cb', 'com.example.mixed:/cb'],
+            false,
+            applicationType: ApplicationType::Native,
+        );
+
+        $this->exec('oauth client list');
+
+        $this->assertExitSuccess();
+        $this->assertOutputContains('Hosts');
+        $this->assertOutputContains('app.example.com, other.example.org');
+        $this->assertOutputContains('An application on this computer');
+        $this->assertOutputContains('mixed.example.net, An application on this computer');
     }
 
     public function testCheckWarnsWhenNoEngineHandlesTheOauthScope(): void

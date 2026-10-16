@@ -97,13 +97,16 @@ grant answers `unauthorized_client`.
 
 ```php
 'forClient' => function (Client $client, ProtectedResource $resource): mixed {
-    if ($client->name !== 'Nightly import') {
+    if ($client->clientId !== 'service-import-client') {
         return null;
     }
 
     return ['id' => 'service-import', 'role' => 'service'];
 },
 ```
+
+Identify the client by `$client->clientId` (or its internal `$client->id`), never by `$client->name`: the name
+is display text that, for a client that registered itself, the client chooses.
 
 The token's subject is the client's `client_id` and its subject type is `client`, so it never passes for
 a person. Nobody consents for them: the consent page only serves people. To restrict their scopes,

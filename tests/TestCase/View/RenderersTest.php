@@ -238,7 +238,7 @@ class RenderersTest extends TestCase
         $this->assertStringContainsString('<title>Authorize An application on this computer</title>', $html);
         $this->assertStringContainsString('<h1>An application on this computer wants to access Test MCP</h1>', $html);
         $this->assertStringContainsString(
-            'The request comes from An application on this computer. Your answer is sent to claude.ai.',
+            'The request comes from an application on this computer. Your answer is sent to claude.ai:.',
             $html,
         );
         $this->assertStringContainsString('It calls itself <q>Claude</q>. Anyone can choose that name.', $html);
@@ -692,7 +692,7 @@ class RenderersTest extends TestCase
             'com.example.app:/oauth/callback?error=invalid_request',
         ));
 
-        $this->assertStringContainsString('Continue to com.example.app</a>', $html);
+        $this->assertStringContainsString('Continue to com.example.app:</a>', $html);
         $this->assertStringContainsString('href="com.example.app:/oauth/callback?error=invalid_request"', $html);
     }
 

@@ -12,6 +12,9 @@ msgstr ""
 msgid "The request comes from {0}. Your answer is sent to {1}."
 msgstr ""
 
+msgid "The request comes from an application on this computer. Your answer is sent to {0}."
+msgstr ""
+
 msgid "This application registered itself; its name is not verified."
 msgstr ""
 

@@ -66,13 +66,15 @@ credentials grant is described in [users](users.md#forclient).
 bin/cake oauth client list
 ```
 
-Prints a table of every client: client id, name, type, authentication method, created, last used and
-revoked (`-` when empty). Clients created from metadata documents (`MetadataDocument`) and by dynamic
+Prints a table of every client: client id, name, hosts, type, authentication method, created, last used and
+revoked (`-` when empty). The name is what the client declared (a self-registered client chooses it, so the
+column is headed "Name (declared)"); the hosts are the web hosts of its redirect URIs, plus "An application on
+this computer" when one of them is a private-use scheme. Clients created from metadata documents (`MetadataDocument`) and by dynamic
 registration (`Dynamic`) are listed next to the ones you added.
 
 ```
-Client id   Name                  Type         Authentication       Created           Last used         Revoked
-0b6f0a3c... Reporting dashboard   registered   client_secret_basic  2026-10-16 12:00  2026-10-16 12:30  -
+Client id   Name (declared)       Hosts                Type         Authentication       Created           Last used         Revoked
+0b6f0a3c... Reporting dashboard   reports.example.com  registered   client_secret_basic  2026-10-16 12:00  2026-10-16 12:30  -
 ```
 
 (The real output is drawn as a table with borders.)

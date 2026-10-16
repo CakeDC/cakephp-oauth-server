@@ -163,7 +163,9 @@ browsers reject the response.
   that wraps every request in `BEGIN ... COMMIT`). A rollback after an error could undo tokens already
   handed out, and checks after an atomic update could read a stale snapshot. Also, two first approvals of the
   same client at once (a double click on Allow) are absorbed by falling back from the insert to an update on the
-  unique key, which PostgreSQL cannot do inside a transaction the failed insert aborted. Exclude the OAuth routes
+  unique key, which PostgreSQL cannot do inside a transaction the failed insert aborted (on MySQL and MariaDB under
+  REPEATABLE READ the fallback's read sees the snapshot from before the other insert and fails the same way).
+  Exclude the OAuth routes
   from such a wrapper.
 
 ## Cron

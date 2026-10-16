@@ -29,11 +29,20 @@ class OAuthClientListCommand extends Command
     public function execute(Arguments $args, ConsoleIo $io): int
     {
         $date = fn(?DateTimeImmutable $value): string => $value === null ? '-' : $value->format('Y-m-d H:i');
-        $rows = [['Client id', 'Name', 'Type', 'Authentication', 'Created', 'Last used', 'Revoked']];
+        $rows = [[
+            'Client id', 'Name (declared)', 'Hosts', 'Type', 'Authentication', 'Created', 'Last used', 'Revoked',
+        ]];
         foreach (OAuthServer::server()->storage()->findClients() as $client) {
+            // The name is what the client declared (a self-registered client chooses it freely); the hosts its
+            // answers go to are the only label it cannot choose, and an application without one is local.
+            $hosts = $client->webHosts();
+            if ($client->hasNonWebRedirect()) {
+                $hosts[] = __d('oauth_server', 'An application on this computer');
+            }
             $rows[] = [
                 $client->clientId,
                 $client->name,
+                $hosts === [] ? '-' : implode(', ', $hosts),
                 $client->type->value,
                 $client->authMethod->value,
                 $date($client->createdAt),

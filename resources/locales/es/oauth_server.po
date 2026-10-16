@@ -14,6 +14,9 @@ msgstr "{0} quiere acceder a {1}"
 msgid "The request comes from {0}. Your answer is sent to {1}."
 msgstr "La solicitud viene de {0}. Tu respuesta se envía a {1}."
 
+msgid "The request comes from an application on this computer. Your answer is sent to {0}."
+msgstr "La solicitud viene de una aplicación en este equipo. Tu respuesta se envía a {0}."
+
 msgid "This application registered itself; its name is not verified."
 msgstr "Esta aplicación se registró sola; su nombre no está verificado."
 

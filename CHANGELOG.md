@@ -25,6 +25,16 @@ First release. An OAuth 2.1 authorization server for CakePHP 5 on top of cakedc/
   private-use redirect. New public `CakeDC\OAuthServer\View\QuotedName::html()` prints a client-chosen name that
   way for template overrides. Overrides that print `client->name` or `clientHost()` in the heading of a
   dynamically registered client are spoofable: update them ([pages](docs/pages.md#variables)).
+- Follows the core's last review fixes: a private-use scheme is shown with its colon (`claude.ai:`, so it cannot
+  pass for a host), and the consent page of a self-registered application with a private-use redirect says "The
+  request comes from an application on this computer" instead of repeating the fixed label as if it were a host.
+  New translatable string, Spanish catalogue updated.
+- `oauth client list` has a "Hosts" column (the web hosts of the redirect URIs, plus "An application on this
+  computer" for a private-use redirect) and heads the name column "Name (declared)": a self-registered client's
+  name is its own choice.
+- Documentation: `forClient` examples identify the client by `clientId`, never by name; a confidential
+  self-registered client with a remembered consent skips the consent page (only public ones always see it); the
+  `saveConsent` outer-transaction limit applies to MySQL and MariaDB under REPEATABLE READ as well as PostgreSQL.
 - `registration.allowPrivateSchemes` now defaults to `false` (the core's new default): dynamic registration and
   metadata documents accept https and loopback http redirect URIs only. Clients added with `oauth client add` may
   still use private-use schemes. The configuration example no longer enables it.

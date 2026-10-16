@@ -514,6 +514,21 @@ class OAuthControllerTest extends TestCase
         $this->assertResponseCode(400);
     }
 
+    public function testTheIntrospectLimitOfThePluginConfigurationReachesTheCore(): void
+    {
+        Cache::clear('default');
+        $this->configure(['rateLimit' => ['cache' => 'default', 'introspect' => [2, 60]]]);
+        $headers = ['headers' => ['Content-Type' => 'application/x-www-form-urlencoded']];
+        foreach ([1, 2] as $attempt) {
+            $this->configRequest($headers);
+            $this->post('/oauth/introspect', ['token' => 'x']);
+            $this->assertResponseCode(401, 'attempt ' . $attempt);
+        }
+        $this->configRequest($headers);
+        $this->post('/oauth/introspect', ['token' => 'x']);
+        $this->assertResponseCode(429);
+    }
+
     public function testRateLimitsKeyOnTheRealClientAddress(): void
     {
         Cache::clear('default');
