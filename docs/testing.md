@@ -53,7 +53,7 @@ class PostsControllerTest extends TestCase
 | `withOAuthToken(string $token): void` | Sends the token as `Authorization: Bearer ...` on the next request |
 | `actAsOAuth($identity, array $scopes = [], ?string $resource = null): string` | Both of the above; returns the token |
 
-- `$identity` is the person: an id, an `Authentication\IdentityInterface`, an entity or an array with `id`.
+- `$identity` is the person: an id, an `Authentication\IdentityInterface`, an entity or an array with the primary key column of your users table (`id` unless it is called otherwise).
   The person must be known to the configured user provider (the `finder` must find them), or
   `InvalidArgumentException` is thrown.
 - `$scopes` empty means the resource's `defaultScopes`. Scopes the resource does not declare, or the person
