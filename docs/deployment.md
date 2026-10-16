@@ -15,6 +15,12 @@ that the public https URL, with the right host and no trailing slash. A developm
 'OAuthServer' => ['issuer' => 'https://auth.example.com'],
 ```
 
+**Set it explicitly in production**, either `OAuthServer.issuer` or `App.fullBaseUrl`. When
+`App.fullBaseUrl` is not configured, CakePHP's bootstrap fills it from the `Host` header of the first
+request. The issuer is then whatever host name a client sent, and the metadata response, which is publicly
+cacheable, can publish an issuer, endpoints and resource URLs that point at a host an attacker chose
+(a cache or a client may keep them). With the value configured, the `Host` header no longer matters.
+
 Clients compare the `issuer` in the metadata with the URL they fetched it from and refuse a mismatch, so
 spell it exactly as clients use it. Resource URLs in `resources` are https too. Your session cookie must
 be `Secure`; behind a proxy that terminates TLS, make Cake aware that the request was https (the next

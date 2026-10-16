@@ -75,8 +75,9 @@ Events (the audit trail) are described in [events](events.md).
 ## Production checklist
 
 - [ ] `bin/cake oauth check` has no `FAIL`, and you read every `WARN`.
-- [ ] `App.fullBaseUrl` (or `OAuthServer.issuer`) is the public https URL; subdirectory installs have the
-      well-known rewrite ([deployment](deployment.md#applications-in-a-subdirectory)).
+- [ ] `OAuthServer.issuer` (or `App.fullBaseUrl`) is set explicitly to the public https URL, never left to
+      CakePHP's `Host` header fallback ([deployment](deployment.md#https-and-the-issuer)); subdirectory installs
+      have the well-known rewrite ([deployment](deployment.md#applications-in-a-subdirectory)).
 - [ ] `OAuthServer.secret` is set from the environment (at least 32 random characters), not derived, and
       not in version control.
 - [ ] `rateLimit.cache` names a cache shared by all PHP processes. It is not `null`.

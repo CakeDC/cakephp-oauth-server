@@ -14,6 +14,8 @@ First release. An OAuth 2.1 authorization server for CakePHP 5 on top of cakedc/
 - `oauth check` also warns about a missing CSRF middleware and a Session authenticator before the Token one,
   checks that a string login URL routes, and no longer accuses subdirectory installs of an `App.base` mismatch
   when the base is detected at runtime.
+- Deployment docs: set `OAuthServer.issuer` or `App.fullBaseUrl` explicitly; the skeleton otherwise fills it
+  from the `Host` header.
 - Routes for the metadata document and the authorize, token, register, revoke, introspect and connections
   endpoints, handled by `OAuthController`.
 - ORM storage (`OrmStorage`) and one migration for `oauth_clients`, `oauth_authorization_codes`,
