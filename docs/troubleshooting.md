@@ -91,7 +91,7 @@ The `resource` a client sends does not match a declared resource. The identifier
 
 Behind a proxy every request comes from the proxy address. Configure trusted proxies
 ([deployment](deployment.md#trusted-proxies-and-the-client-ip)). Claude's shared egress range
-`160.79.104.0/21` may also share limits; raise `rateLimit.token`.
+`160.79.104.0/21` may also share limits (it is not exempt from them); raise `rateLimit.token`.
 
 ## No rate limiting, or no CIMD protection
 

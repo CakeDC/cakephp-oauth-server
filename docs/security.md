@@ -73,7 +73,8 @@ Events (the audit trail) are described in [events](events.md).
 - [ ] `OAuthServer.secret` is set from the environment (at least 32 random characters), not derived, and
       not in version control.
 - [ ] `rateLimit.cache` names a cache shared by all PHP processes. It is not `null`.
-- [ ] `trustProxy` is enabled only behind trusted proxies, with the proxies listed
+- [ ] `trustProxy` is enabled only when the application is firewalled so that only your proxies reach it
+      (Cake does not check `REMOTE_ADDR` against the list), with the proxies listed
       ([deployment](deployment.md#trusted-proxies-and-the-client-ip)).
 - [ ] `OAuthServer::csrfSkip()` is in your `CsrfProtectionMiddleware`.
 - [ ] `bin/cake oauth prune` runs daily.
@@ -81,7 +82,7 @@ Events (the audit trail) are described in [events](events.md).
       expect (include `claude.ai` if you use it).
 - [ ] Features you do not use are off: `introspection`, `clientCredentials`, `personalTokens`.
 - [ ] `tokenPrefix` names your product.
-- [ ] Anthropic's egress range `160.79.104.0/21` is not blocked or challenged on the OAuth and MCP paths.
+- [ ] Anthropic's egress range `160.79.104.0/21` is not blocked or challenged on the OAuth and MCP paths (it stays subject to the rate limits).
 - [ ] A listener records `OAuthServer.refreshTokenReused` and `OAuthServer.tokenRevoked`.
 - [ ] Revocation is wired to the events that matter to you: password change, account removal, role change.
 - [ ] The database user can only touch the four `oauth_*` tables, and backups are encrypted.

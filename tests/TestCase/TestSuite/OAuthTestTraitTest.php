@@ -70,6 +70,16 @@ class OAuthTestTraitTest extends TestCase
         $this->assertResponseContains('{"error":"unauthorized"}');
     }
 
+    public function testABearerPostSkipsCsrfAndAnyOtherPostDoesNot(): void
+    {
+        $this->actAsOAuth(1, [], 'http://localhost/api');
+        $this->post('/api/me');
+        $this->assertResponseOk();
+
+        $this->post('/api/me');
+        $this->assertResponseCode(403);
+    }
+
     public function testASecondTokenReplacesTheFirst(): void
     {
         $first = $this->oauthTokenFor(1, [], 'http://localhost/api');

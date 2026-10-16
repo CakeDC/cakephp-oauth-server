@@ -4,6 +4,7 @@
 
 First release. An OAuth 2.1 authorization server for CakePHP 5 on top of cakedc/oauth-server.
 
+- `OAuthServer::csrfSkip()` skips CSRF for the client endpoints and for requests with a bearer token of this server.
 - Routes for the metadata document and the authorize, token, register, revoke, introspect and connections
   endpoints, handled by `OAuthController`.
 - ORM storage (`OrmStorage`) and one migration for `oauth_clients`, `oauth_authorization_codes`,

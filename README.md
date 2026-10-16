@@ -67,7 +67,7 @@ this documentation links to them instead of repeating them.
    ];
    ```
 
-5. Let OAuth clients call the token endpoints without a CSRF token. In `Application::middleware()`:
+5. Let OAuth clients call the token endpoints, and bearer authenticated requests, without a CSRF token. In `Application::middleware()`:
 
    ```php
    use CakeDC\OAuthServer\OAuthServer;

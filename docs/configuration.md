@@ -67,7 +67,7 @@ Behaviour behind these keys that is worth knowing before production:
 
 ## Plugin keys
 
-### userProvider
+### `userProvider`
 
 How people are found. See [users](users.md).
 
@@ -81,7 +81,7 @@ How people are found. See [users](users.md).
 | `scopes` | callable or null | `null` (no extra limit) | `fn (IdentityInterface $identity, ProtectedResource $resource): ?array` |
 | `forClient` | callable or null | `null` (no service identity) | `fn (Client $client, ProtectedResource $resource): mixed` |
 
-### login
+### `login`
 
 Where anonymous people sign in.
 
@@ -91,13 +91,13 @@ Where anonymous people sign in.
 | `redirectParam` | string | `redirect` | Query parameter the login reads the return URL from |
 | `identityAttribute` | string | `identity` | Request attribute holding the identity, when the request has no authentication service |
 
-### consent
+### `consent`
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `layout` | string, false or null | `null` | Layout of the consent and error pages. `null` is the plugin's `CakeDC/OAuthServer.oauth`, `false` renders the template alone, a string is your layout |
 
-### connections
+### `connections`
 
 `OAuthServer.connections` is `true` or `false` (enable or disable the page, like in the core), or an array:
 
@@ -110,7 +110,7 @@ Where anonymous people sign in.
 'connections' => ['enabled' => true, 'layout' => 'default'],
 ```
 
-### rateLimit
+### `rateLimit`
 
 Besides the core's per endpoint limits, the plugin reads `rateLimit.cache`:
 
@@ -128,7 +128,7 @@ production.
 'rateLimit' => ['cache' => 'oauth', 'token' => [120, 60]],
 ```
 
-### users
+### `users`
 
 Used only with `CakeDC/Users`.
 
@@ -139,7 +139,7 @@ Used only with `CakeDC/Users`.
 Without it the authenticator accepts tokens of the default resource on every application route, so scope
 checks are your job. See [cakedc-users](cakedc-users.md).
 
-### services
+### `services`
 
 Advanced. Replacement services, used by the plugin's own tests. Each value must be an instance of the
 named interface or `InvalidArgumentException` is thrown.

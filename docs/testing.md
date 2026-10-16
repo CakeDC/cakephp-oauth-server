@@ -34,9 +34,10 @@ class PostsControllerTest extends TestCase
         $this->assertResponseOk();
     }
 
-    public function testNoTokenIsAnonymous(): void
+    public function testAnInvalidTokenIsRefused(): void
     {
-        // What an anonymous request gets depends on your authentication setup.
+        // An invalid token with this server's prefix is challenged with 401.
+        $this->configRequest(['headers' => ['Authorization' => 'Bearer example_at_invalid']]);
         $this->get('/api/posts');
 
         $this->assertResponseCode(401);
@@ -73,7 +74,7 @@ class PostsControllerTest extends TestCase
   configuration inside a test (and in `setUp()` as shown).
 - The authenticator that the route uses must be loaded in your `getAuthenticationService()`, for the same
   resource you pass here. See [protecting-apis](protecting-apis.md).
-- Tests do not need a rate limit cache: set `'rateLimit' => ['cache' => null]` in the test configuration,
-  as the plugin's own tests do. Counters would otherwise accumulate across tests in one process.
+- Tests do not need a rate limit cache: set `'rateLimit' => ['cache' => null]` in the test configuration only (never in production), as the
+  plugin's own tests do. Counters would otherwise accumulate across tests in one process.
 - For code that needs a fixed time or a fake metadata fetch, `OAuthServer.services` takes `clock`,
   `transport` and `dns` replacements; see [configuration](configuration.md#services).

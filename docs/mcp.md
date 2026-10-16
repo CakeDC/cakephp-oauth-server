@@ -66,13 +66,18 @@ under development, so check its documentation for the exact transport calls.
 The OAuth endpoints themselves (`/oauth/authorize`, `/oauth/token`, the metadata and so on) are routed by
 this plugin, next to your MCP endpoint.
 
+MCP clients POST to your endpoint with `Authorization: Bearer ...`. With `OAuthServer::csrfSkip()` in your
+`CsrfProtectionMiddleware` (see [installation](installation.md#csrf)) those POSTs are not rejected with 403,
+while CSRF stays on for session routes. Never disable it globally.
+
 ## 3. Connect a client
 
 Connecting claude.ai and Claude Code is described in the core's
 [clients](https://github.com/CakeDC/oauth-server/blob/1.x/docs/clients.md): nothing needs registering
 because they use Client ID Metadata Documents. Your MCP endpoint and the metadata must be reachable from the
 internet over https, and you must not block or challenge Anthropic's egress range `160.79.104.0/21` on
-the OAuth and MCP paths (see [deployment](deployment.md#claudes-egress-range)).
+the OAuth and MCP paths (see [deployment](deployment.md#claudes-egress-range)). The range is still subject to
+the plugin's rate limits.
 
 If you set `cimd.allowedHosts`, include `claude.ai`. With `cimd.enabled` set to `false`, claude.ai needs
 `registration.mode` `open` or a client you registered with `bin/cake oauth client add`.

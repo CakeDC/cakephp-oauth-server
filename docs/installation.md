@@ -74,8 +74,17 @@ public function middleware(MiddlewareQueue $middlewareQueue): MiddlewareQueue
 }
 ```
 
-`csrfSkip()` compares the request path with the route prefix (`/oauth` by default) plus `token`,
-`register`, `revoke` or `introspect`. The authorize and connections endpoints are not skipped.
+`csrfSkip()` returns `true` for two kinds of request:
+
+- a request to the route prefix (`/oauth` by default) plus `token`, `register`, `revoke` or `introspect`;
+- a request carrying `Authorization: Bearer <token>` where the token starts with this server's own prefix
+  (`<tokenPrefix>_at_` or `<tokenPrefix>_pat_`). So a bearer authenticated POST to your API or MCP route is
+  not rejected with 403. An Authorization header is not an ambient credential: a page on another site
+  cannot make the browser send a valid token.
+
+Everything else stays CSRF checked: session routes, requests with no bearer or a foreign one, and the
+consent and connections pages (`<prefix>/authorize` and `<prefix>/connections` are never skipped, even with
+a bearer header, because they are session pages). Never disable CSRF protection globally.
 
 A global `CsrfProtectionMiddleware` also sets a `csrfToken` cookie on the metadata response, which is
 publicly cacheable. Either scope CSRF away from `/.well-known` or accept the cookie.

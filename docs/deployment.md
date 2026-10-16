@@ -45,6 +45,10 @@ the `X-Forwarded-*` headers, so enable it only when the application is reachable
 proxies alone; otherwise anybody can send `X-Forwarded-For: 1.2.3.4` and dodge the limits. Without
 `trustProxy` the forwarding headers are ignored.
 
+Cake does not compare `REMOTE_ADDR` with the proxy list: once `trustProxy` is on, the forwarding headers
+of a client that reaches the application directly are believed too, so a forged `X-Forwarded-For` would
+dodge the limits. Firewall the application so that only your proxies can reach it.
+
 When the request has no address at all (CLI, integration tests) the plugin counts it as `unknown`.
 
 ## The rate limit cache
@@ -58,7 +62,8 @@ holds the metadata document fetch budget; `'cache' => null` turns off all three 
 
 claude.ai calls from Anthropic's egress range `160.79.104.0/21`, a shared range that may serve many people,
 so its requests may share rate limits. Give the `token` limit enough room, and do not block or challenge
-that range on the OAuth and MCP paths (see the core's note on Cloudflare and WAFs).
+that range on the OAuth and MCP paths (see the core's note on Cloudflare and WAFs). The range is not exempt:
+it stays subject to the plugin's rate limits.
 
 ## Applications in a subdirectory
 
@@ -70,6 +75,10 @@ If the application lives below a path (`https://example.com/app`), then:
    `/.well-known/oauth-authorization-server/app`, **at the host root**, not below `/app`. Clients look
    there. The plugin connects that route inside the application, so the web server must send the request
    to the application:
+
+The location for `/app` must already hand requests to the application's front controller (with the
+`try_files` rule of your normal subdirectory setup). The snippet below was not tested on a real
+subdirectory install; adapt it to your layout.
 
 ```nginx
 # Host root: hand the well-known URL to the application below /app.
@@ -130,8 +139,8 @@ browsers reject the response.
 - **Ids.** Ids are `CHAR(36)`, never native UUID columns, on every database.
 - **Transactions.** Never run the OAuth endpoints inside a request-wide database transaction (a middleware
   that wraps every request in `BEGIN ... COMMIT`). A rollback after an error could undo tokens already
-  handed out, and checks after an atomic update could read a stale snapshot. Exclude the OAuth routes or
-  give the storage its own connection.
+  handed out, and checks after an atomic update could read a stale snapshot. Exclude the OAuth routes from
+  such a wrapper.
 
 ## Cron
 

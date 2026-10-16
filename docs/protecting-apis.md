@@ -94,6 +94,14 @@ Pragma: no-cache
 `resource_metadata` appears only when `resourceMetadataUrl` is set. The description comes from the core's
 `ValidationFailure`.
 
+## CSRF on token routes
+
+A bearer authenticated POST, PUT or DELETE to your API route would be rejected by Cake's CSRF middleware,
+because API clients send no CSRF token. `OAuthServer::csrfSkip()` (see [installation](installation.md#csrf))
+returns `true` for requests carrying a bearer token of this server, so using it in
+`skipCheckCallback()` is enough. Keep CSRF protection on for your session routes and never disable it
+globally: requests with no bearer token, or with a foreign one, are still checked.
+
 ## Reading the token and checking scopes
 
 `OAuthServer::token($request)` returns the `ValidatedToken` of a request authenticated by the Token

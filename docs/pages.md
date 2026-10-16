@@ -21,6 +21,9 @@ templates/plugin/CakeDC/OAuthServer/layout/oauth.php
 
 Cake picks up your copy automatically. Override only what you need.
 
+Templates render with your application's `AppView`, so its helpers are available. After a render on the
+command line, `CakeTemplateRenderer` leaves a `Router` request set.
+
 ### Variables
 
 | Template | Variable | Type |

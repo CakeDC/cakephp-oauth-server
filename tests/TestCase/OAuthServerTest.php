@@ -102,6 +102,33 @@ class OAuthServerTest extends TestCase
     /**
      * @return void
      */
+    public function testCsrfSkipCoversRequestsWithABearerTokenOfThisServer(): void
+    {
+        $post = fn(string $path, array $headers = [], array $cookies = []): ServerRequest => new ServerRequest([
+            'url' => $path,
+            'environment' => ['REQUEST_METHOD' => 'POST'] + $headers,
+            'cookies' => $cookies,
+        ]);
+        $bearer = fn(string $token): array => ['HTTP_AUTHORIZATION' => 'Bearer ' . $token];
+
+        $this->assertTrue(OAuthServer::csrfSkip($post('/api/posts', $bearer('test_at_abc123'))));
+        $this->assertTrue(OAuthServer::csrfSkip($post('/mcp', $bearer('test_pat_abc123'))));
+        $this->assertTrue(OAuthServer::csrfSkip($post('/mcp', ['HTTP_AUTHORIZATION' => 'bearer test_at_abc==  '])));
+
+        $this->assertFalse(OAuthServer::csrfSkip($post('/api/posts')));
+        $this->assertFalse(OAuthServer::csrfSkip($post('/api/posts', $bearer('other_at_abc123'))));
+        $this->assertFalse(OAuthServer::csrfSkip($post('/api/posts', $bearer('test_xx_abc123'))));
+        $this->assertFalse(OAuthServer::csrfSkip($post('/api/posts', ['HTTP_AUTHORIZATION' => 'Basic test_at_abc'])));
+        $this->assertFalse(OAuthServer::csrfSkip($post('/api/posts', $bearer("test_at_abc\nx"))));
+        $this->assertFalse(OAuthServer::csrfSkip($post('/api/posts', [], ['PHPSESSID' => 'abc'])));
+        // Session pages stay checked, whatever the header says.
+        $this->assertFalse(OAuthServer::csrfSkip($post('/oauth/authorize', $bearer('test_at_abc123'))));
+        $this->assertFalse(OAuthServer::csrfSkip($post('/oauth/connections', $bearer('test_at_abc123'))));
+    }
+
+    /**
+     * @return void
+     */
     public function testPageCspIsExtendedOnlyForAnAppLayout(): void
     {
         $this->assertNull(OAuthServer::pageCsp());

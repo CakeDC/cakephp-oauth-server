@@ -55,8 +55,13 @@ final class OAuthServer
     }
 
     /**
-     * Whether $request goes to an endpoint OAuth clients call without a CSRF token (token, register,
-     * revoke, introspect). Use it in CsrfProtectionMiddleware::skipCheckCallback().
+     * Whether $request needs no CSRF token: it goes to an endpoint OAuth clients call (token, register,
+     * revoke, introspect), or it carries a bearer token of this server (`<prefix>_at_` or `<prefix>_pat_`).
+     * Use it in CsrfProtectionMiddleware::skipCheckCallback().
+     *
+     * An Authorization header is not an ambient credential: a page on another site cannot make the browser
+     * attach a valid token. The consent and connections pages are session pages and are never skipped, with
+     * or without a bearer token. Requests without a bearer token, or with a foreign one, stay checked.
      *
      * @param \Psr\Http\Message\ServerRequestInterface $request The request.
      * @return bool
@@ -70,8 +75,30 @@ final class OAuthServer
                 return true;
             }
         }
+        foreach (['authorize', 'connections'] as $page) {
+            if ($path === $prefix . '/' . $page) {
+                return false;
+            }
+        }
 
-        return false;
+        return self::hasOwnBearer($request);
+    }
+
+    /**
+     * Whether the Authorization header is a bearer token with this server's access or personal prefix.
+     *
+     * @param \Psr\Http\Message\ServerRequestInterface $request The request.
+     * @return bool
+     */
+    private static function hasOwnBearer(ServerRequestInterface $request): bool
+    {
+        $header = $request->getHeaderLine('Authorization');
+        if (preg_match('/^Bearer +([A-Za-z0-9\-._~+\/]+=*) *\z/i', $header, $matches) !== 1) {
+            return false;
+        }
+        $prefix = self::server()->config()->tokenPrefix;
+
+        return str_starts_with($matches[1], $prefix . '_at_') || str_starts_with($matches[1], $prefix . '_pat_');
     }
 
     /**
