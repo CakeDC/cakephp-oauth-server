@@ -11,6 +11,9 @@ First release. An OAuth 2.1 authorization server for CakePHP 5 on top of cakedc/
   person on the rest of the application.
 - People tables keyed by a column other than `id` work: the identity reports the key as its identifier.
 - An invalid `OAuthServer.users` setting no longer breaks `bin/cake` with cakedc/users; `oauth check` reports it.
+- `oauth check` also warns about a missing CSRF middleware and a Session authenticator before the Token one,
+  checks that a string login URL routes, and no longer accuses subdirectory installs of an `App.base` mismatch
+  when the base is detected at runtime.
 - Routes for the metadata document and the authorize, token, register, revoke, introspect and connections
   endpoints, handled by `OAuthController`.
 - ORM storage (`OrmStorage`) and one migration for `oauth_clients`, `oauth_authorization_codes`,

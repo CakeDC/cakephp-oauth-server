@@ -113,7 +113,8 @@ See the table in [commands](commands.md#oauth-check). The ones that most often f
 | `Secret` | `OAuthServer.secret` shorter than 32 characters, or no usable `Security.salt` |
 | `Tables` | The migration was not run (`bin/cake migrations migrate -p CakeDC/OAuthServer`), or an old copy of it was; copy the current file |
 | `Users` | The users table has no `active` finder; add `findActive()` or set `userProvider.finder` |
-| `CSRF` | The skip callback is missing |
+| `CSRF` | The skip callback is missing, or there is no `CsrfProtectionMiddleware` at all |
+| `Authenticators` | The Session authenticator is loaded before the Token one, there is no Token authenticator, or it cannot be built (a root resource needs `paths`) |
 | `RBAC` | The bypass rule is missing |
 | `Rate limiting` | The cache configuration named in `rateLimit.cache` does not exist |
 | `Client metadata documents` | `ext-curl` is not installed |

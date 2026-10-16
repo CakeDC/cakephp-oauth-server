@@ -435,4 +435,22 @@ class UsersIntegrationTest extends TestCase
 
         $this->assertOutputContains('[PASS] Users integration: the Token authenticator validates http://localhost/api below the path of its resource');
     }
+
+    public function testCheckWarnsWhenTheSessionAuthenticatorComesFirst(): void
+    {
+        $authenticators = (array)Configure::read('Auth.Authenticators');
+        $this->exec('oauth check');
+        $this->assertOutputContains('[PASS] Authenticators: Token comes before Session');
+
+        $token = $authenticators['OAuthServerToken'];
+        unset($authenticators['OAuthServerToken']);
+        Configure::write('Auth.Authenticators', $authenticators + ['OAuthServerToken' => $token]);
+        try {
+            $this->exec('oauth check');
+        } finally {
+            Configure::write('Auth.Authenticators', ['OAuthServerToken' => $token] + $authenticators);
+        }
+
+        $this->assertOutputContains('[WARN] Authenticators: the Session authenticator comes before the Token');
+    }
 }

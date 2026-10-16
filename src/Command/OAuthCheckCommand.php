@@ -3,10 +3,14 @@ declare(strict_types=1);
 
 namespace CakeDC\OAuthServer\Command;
 
+use Authentication\AuthenticationService;
+use Authentication\AuthenticationServiceProviderInterface;
+use Authentication\Authenticator\SessionAuthenticator;
 use Cake\Cache\Cache;
 use Cake\Command\Command;
 use Cake\Console\Arguments;
 use Cake\Console\ConsoleIo;
+use Cake\Core\App;
 use Cake\Core\Configure;
 use Cake\Core\Exception\CakeException;
 use Cake\Core\Plugin;
@@ -20,9 +24,12 @@ use Cake\Http\ServerRequest;
 use Cake\Log\Engine\BaseLog;
 use Cake\Log\Log;
 use Cake\ORM\Locator\LocatorAwareTrait;
+use Cake\Routing\Exception\MissingRouteException;
 use Cake\Routing\Router;
+use Cake\Utility\Inflector;
 use Cake\Utility\Security;
 use CakeDC\OAuth\Server\Token\TokenGenerator;
+use CakeDC\OAuthServer\Authenticator\TokenAuthenticator;
 use CakeDC\OAuthServer\Config\PluginConfig;
 use CakeDC\OAuthServer\Identity\OrmUserProvider;
 use CakeDC\OAuthServer\Integration\UsersIntegration;
@@ -120,8 +127,9 @@ class OAuthCheckCommand extends Command
                     $paths === null ? 'the path of its resource' : implode(', ', $paths),
                 )];
             },
-            'Login URL' => fn(): array => ['pass', Router::url($config->login()['url'])],
+            'Login URL' => fn(): array => $this->loginUrl($config),
             'CSRF' => fn(): array => $this->csrf($config),
+            'Authenticators' => fn(): array => $this->authenticators(),
             'RBAC' => fn(): array => Plugin::isLoaded('CakeDC/Users')
                 ? UsersIntegration::rbacReport()
                 : ['pass', 'cakedc/users is not loaded'],
@@ -205,16 +213,21 @@ class OAuthCheckCommand extends Command
         }
         $path = rtrim((string)parse_url($issuer, PHP_URL_PATH), '/');
         $base = Configure::read('App.base');
-        $base = is_string($base) ? rtrim($base, '/') : '';
         if ($path !== '') {
             $warnings[] = 'has a path, so the RFC 8414 metadata document must be served from the host root '
                 . '(add a rewrite for /.well-known/oauth-authorization-server' . $path . ')';
         }
-        if ($path !== $base) {
+        if (!is_string($base)) {
+            // `App.base` false means Cake detects the base directory per request: the CLI cannot know it.
+            if ($path !== '') {
+                $warnings[] = 'App.base is detected at runtime, so the issuer path cannot be compared with it '
+                    . 'on the CLI; make sure it is the base directory of the application';
+            }
+        } elseif ($path !== rtrim($base, '/')) {
             $warnings[] = sprintf(
                 'path "%s" differs from App.base "%s"; set OAuthServer.issuer to the https URL of the application',
                 $path,
-                $base,
+                rtrim($base, '/'),
             );
         }
 
@@ -295,16 +308,49 @@ class OAuthCheckCommand extends Command
     }
 
     /**
-     * Whether the application's CSRF middleware skips the token endpoint.
+     * The resolved login URL; a local string URL must also match a route.
      *
      * @param \CakeDC\OAuthServer\Config\PluginConfig $config The configuration.
      * @return array{0: 'pass'|'warn'|'fail', 1: string}
      */
-    private function csrf(PluginConfig $config): array
+    private function loginUrl(PluginConfig $config): array
+    {
+        $login = $config->login()['url'];
+        // Throws for an array URL that no route builds.
+        $url = Router::url($login);
+        if (is_string($login) && str_starts_with($url, '/')) {
+            try {
+                $params = Router::parseRequest(new ServerRequest(['url' => (string)strtok($url, '?')]));
+            } catch (MissingRouteException) {
+                $params = null;
+            }
+            if ($params !== null) {
+                // Fallback routes match any path: the controller has to exist as well.
+                $plugin = is_string($params['plugin'] ?? null) ? $params['plugin'] . '.' : '';
+                $prefix = is_string($params['prefix'] ?? null) ? '/' . Inflector::camelize($params['prefix']) : '';
+                $controller = is_string($params['controller'] ?? null) ? $params['controller'] : '';
+                $params = App::className($plugin . $controller, 'Controller' . $prefix, 'Controller') === null
+                    ? null
+                    : $params;
+            }
+            if ($params === null) {
+                return ['warn', $url . ' matches no route or controller of the application: people would get a 404'];
+            }
+        }
+
+        return ['pass', $url];
+    }
+
+    /**
+     * A new instance of the application class, or a reason why there is none.
+     *
+     * @return \Cake\Http\BaseApplication|string
+     */
+    private function application(): BaseApplication|string
     {
         $class = Configure::read('App.namespace') . '\\Application';
         if (!class_exists($class)) {
-            return ['warn', 'could not find the application class to inspect its middleware'];
+            return 'could not find the application class to inspect it';
         }
         // Building an application replaces the global plugin collection; put the running one back.
         $plugins = Plugin::getCollection();
@@ -313,8 +359,21 @@ class OAuthCheckCommand extends Command
         } finally {
             Plugin::setCollection($plugins);
         }
-        if (!$app instanceof BaseApplication) {
-            return ['warn', 'the application class is not a BaseApplication; its middleware was not inspected'];
+
+        return $app instanceof BaseApplication ? $app : 'the application class is not a BaseApplication';
+    }
+
+    /**
+     * Whether the application's CSRF middleware skips the token endpoint.
+     *
+     * @param \CakeDC\OAuthServer\Config\PluginConfig $config The configuration.
+     * @return array{0: 'pass'|'warn'|'fail', 1: string}
+     */
+    private function csrf(PluginConfig $config): array
+    {
+        $app = $this->application();
+        if (is_string($app)) {
+            return ['warn', $app . '; its middleware was not inspected'];
         }
         $queue = $app->middleware(new MiddlewareQueue());
         foreach ($queue as $middleware) {
@@ -333,6 +392,107 @@ class OAuthCheckCommand extends Command
                 : ['fail', 'add OAuthServer::csrfSkip($request) to the CsrfProtectionMiddleware skipCheckCallback'];
         }
 
-        return ['pass', 'no CsrfProtectionMiddleware in the queue'];
+        return [
+            'warn',
+            'no CsrfProtectionMiddleware in the queue; the consent and connections pages rely on Cake\'s CSRF '
+            . 'protection, add it and use OAuthServer::csrfSkip() in its skipCheckCallback',
+        ];
+    }
+
+    /**
+     * The order of the authenticators: the plugin's Token authenticator must come before the session one, or
+     * a session cookie would hide a revoked or foreign bearer token.
+     *
+     * @return array{0: 'pass'|'warn'|'fail', 1: string}
+     */
+    private function authenticators(): array
+    {
+        $names = $this->authenticatorNames();
+        if (is_string($names)) {
+            return ['warn', $names];
+        }
+        $token = null;
+        $session = null;
+        foreach ($names as $position => $class) {
+            if ($token === null && is_a($class, TokenAuthenticator::class, true)) {
+                $token = $position;
+            }
+            if ($session === null && is_a($class, SessionAuthenticator::class, true)) {
+                $session = $position;
+            }
+        }
+        if ($token === null) {
+            return [
+                'warn',
+                'no Token authenticator (CakeDC/OAuthServer.Token) in the authentication service, so the tokens '
+                . 'issued here are not accepted by this application (fine when your resources live elsewhere)',
+            ];
+        }
+        if ($session !== null && $session < $token) {
+            return [
+                'warn',
+                'the Session authenticator comes before the Token authenticator: a session cookie sent with a '
+                . 'revoked or foreign bearer token would run as the session user; load the Token one first',
+            ];
+        }
+
+        return ['pass', $session === null ? 'the Token authenticator is loaded' : 'Token comes before Session'];
+    }
+
+    /**
+     * The authenticator classes of the application's authentication service, in order; or a reason why they
+     * cannot be told. Builds the service with a probe request, like the middleware does.
+     *
+     * @return list<class-string>|string
+     */
+    private function authenticatorNames(): array|string
+    {
+        $app = $this->application();
+        if (!is_string($app) && $app instanceof AuthenticationServiceProviderInterface) {
+            $service = $app->getAuthenticationService(new ServerRequest(['url' => '/']));
+            $classes = [];
+            if ($service instanceof AuthenticationService) {
+                foreach ($service->authenticators() as $authenticator) {
+                    $classes[] = $authenticator::class;
+                }
+
+                return $classes;
+            }
+
+            return 'the authentication service is not an AuthenticationService; its authenticators were not inspected';
+        }
+        $configured = Configure::read('Auth.Authenticators');
+        if (Plugin::isLoaded('CakeDC/Users') && is_array($configured)) {
+            // cakedc/users builds its own service from this configuration.
+            $classes = [];
+            foreach ($configured as $name => $settings) {
+                $class = is_array($settings) ? ($settings['className'] ?? null) : null;
+                $classes[] = is_string($class)
+                    ? self::authenticatorClass($class)
+                    : (string)$name;
+            }
+
+            return array_values(array_filter($classes, 'class_exists'));
+        }
+
+        return is_string($app)
+            ? $app . '; its authenticators were not inspected'
+            : 'the application does not provide an authentication service; its authenticators were not inspected';
+    }
+
+    /**
+     * The class an authenticator name from the configuration resolves to.
+     *
+     * @param string $name Plugin syntax or class name.
+     * @return string
+     */
+    private static function authenticatorClass(string $name): string
+    {
+        [$plugin, $class] = pluginSplit($name);
+        if ($plugin !== null) {
+            $class = str_replace('/', '\\', $plugin) . '\\Authenticator\\' . $class . 'Authenticator';
+        }
+
+        return class_exists($class) ? $class : $name;
     }
 }

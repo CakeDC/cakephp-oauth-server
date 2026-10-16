@@ -233,7 +233,7 @@ class CommandsTest extends TestCase
         $this->assertOutputContains('[FAIL] Configuration');
     }
 
-    public function testCheckWarnsWhenTheIssuerHasAPathOrDiffersFromTheBase(): void
+    public function testCheckWarnsWhenTheIssuerHasAPath(): void
     {
         Configure::write('OAuthServer.issuer', 'https://example.com/app');
 
@@ -242,7 +242,129 @@ class CommandsTest extends TestCase
         $this->assertExitSuccess();
         $this->assertOutputContains('[WARN] Issuer');
         $this->assertOutputContains('has a path');
+    }
+
+    public function testCheckCannotVerifyTheBaseWhenItIsDetectedAtRuntime(): void
+    {
+        // App.base is false in the test bootstrap: Cake detects the directory per request. A subdirectory
+        // install is not wrongly accused of a mismatch.
+        Configure::write('OAuthServer.issuer', 'https://example.com/app');
+
+        $this->exec('oauth check');
+
+        $this->assertOutputContains('cannot be compared with it on the CLI');
+        $this->assertOutputNotContains('differs from App.base');
+    }
+
+    public function testCheckComparesTheIssuerPathWithAConfiguredBase(): void
+    {
+        Configure::write('OAuthServer.issuer', 'https://example.com/app');
+        Configure::write('App.base', '/other');
+        try {
+            $this->exec('oauth check');
+        } finally {
+            Configure::write('App.base', false);
+        }
         $this->assertOutputContains('differs from App.base');
+
+        Configure::write('App.base', '/app');
+        try {
+            $this->exec('oauth check');
+        } finally {
+            Configure::write('App.base', false);
+        }
+        $this->assertOutputNotContains('differs from App.base');
+        $this->assertOutputNotContains('cannot be compared');
+    }
+
+    public function testCheckAcceptsAnAbsentBaseForARootIssuer(): void
+    {
+        Configure::write('OAuthServer.issuer', 'https://example.com');
+
+        $this->exec('oauth check');
+
+        $this->assertOutputContains('[PASS] Issuer');
+        $this->assertOutputNotContains('cannot be compared');
+    }
+
+    /**
+     * Runs `oauth check` against another application class and returns the output.
+     *
+     * The command runner of the test trait would build the configured application itself, so the command
+     * runs directly.
+     */
+    private function checkApplication(string $namespace): string
+    {
+        $out = new StubConsoleOutput();
+        Configure::write('App.namespace', $namespace);
+        try {
+            (new OAuthCheckCommand())->run([], new ConsoleIo($out, new StubConsoleOutput()));
+        } finally {
+            Configure::write('App.namespace', 'TestApp');
+        }
+
+        return implode("\n", $out->messages());
+    }
+
+    public function testCheckWarnsWithoutCsrfMiddleware(): void
+    {
+        $output = $this->checkApplication('CakeDC\\OAuthServer\\Test\\Support\\CheckApp\\NoCsrf');
+
+        $this->assertStringContainsString('[WARN] CSRF: no CsrfProtectionMiddleware in the queue', $output);
+    }
+
+    public function testCheckWarnsWhenSessionComesBeforeTheTokenAuthenticator(): void
+    {
+        $output = $this->checkApplication('CakeDC\\OAuthServer\\Test\\Support\\CheckApp\\SessionFirst');
+
+        $this->assertStringContainsString('[WARN] Authenticators: the Session authenticator comes before the Token', $output);
+    }
+
+    public function testCheckWarnsWhenThereIsNoTokenAuthenticator(): void
+    {
+        $output = $this->checkApplication('CakeDC\\OAuthServer\\Test\\Support\\CheckApp\\NoToken');
+
+        $this->assertStringContainsString('[WARN] Authenticators: no Token authenticator', $output);
+    }
+
+    public function testCheckPassesTheAuthenticatorOrderOfTheTestApplication(): void
+    {
+        $this->exec('oauth check');
+
+        $this->assertOutputContains('[PASS] Authenticators: Token comes before Session');
+    }
+
+    public function testCheckFailsWhenTheTokenAuthenticatorCannotBeBuilt(): void
+    {
+        Configure::write('OAuthServer.resources', ['http://localhost' => [
+            'name' => 'Whole site',
+            'scopes' => ['all' => 'Everything'],
+        ]]);
+        try {
+            $output = $this->checkApplication('CakeDC\\OAuthServer\\Test\\Support\\CheckApp\\RootResource');
+        } finally {
+            OAuthServer::reset();
+        }
+
+        $this->assertStringContainsString('[FAIL] Authenticators', $output);
+        $this->assertStringContainsString('host root', $output);
+    }
+
+    public function testCheckWarnsWhenAStringLoginUrlMatchesNoRoute(): void
+    {
+        Configure::write('OAuthServer.login.url', '/nowhere/at/all');
+
+        $this->exec('oauth check');
+        $this->assertOutputContains('[WARN] Login URL: /nowhere/at/all matches no route or controller');
+
+        Configure::write('OAuthServer.login.url', '/login?x=1');
+        $this->exec('oauth check');
+        $this->assertOutputContains('[PASS] Login URL: /login?x=1');
+
+        // Another site's login is not ours to route.
+        Configure::write('OAuthServer.login.url', 'https://sso.example.com/login');
+        $this->exec('oauth check');
+        $this->assertOutputContains('[PASS] Login URL: https://sso.example.com/login');
     }
 
     public function testCheckPassesAHttpsRootIssuer(): void

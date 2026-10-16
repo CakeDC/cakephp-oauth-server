@@ -147,24 +147,27 @@ when any check fails, so it is suitable for a deployment pipeline.
 [PASS] Issuer: https://example.com
 [PASS] Tables: all four tables exist
 [PASS] Users: Users with finder "active"
+[PASS] Users integration: cakedc/users is not loaded
 [PASS] Login URL: /users/login
 [PASS] CSRF: the token, register, revoke and introspect endpoints are skipped
+[PASS] Authenticators: Token comes before Session
 [PASS] RBAC: cakedc/users is not loaded
 [PASS] Rate limiting: cache "default"
 [PASS] Client metadata documents: enabled
-[WARN] Logging: no log engine handles the "oauth" scope, so security events are not recorded
+[PASS] Logging: the "oauth" log engine is configured
 ```
 
 | Check | Fails or warns when |
 | --- | --- |
 | Secret | `OAuthServer.secret` is shorter than 32 characters (fail), or is not set and `Security.salt` is missing or short (fail); a derived secret only warns |
 | Configuration | The configuration is invalid (an unknown key, a bad type, an undeclared resource, a `tokenPrefix` that is not 1 to 16 lowercase letters or digits) |
-| Issuer | The issuer is invalid (fail). Warns for plain http, for an issuer with a path (the RFC 8414 document must be served at the host root), and when the issuer path differs from `App.base` |
+| Issuer | The issuer is invalid (fail). Warns for plain http, for an issuer with a path (the RFC 8414 document must be served at the host root), and when the issuer path differs from a configured `App.base`. When `App.base` is `false` (Cake detects the directory per request) the CLI cannot compare them and says so instead of guessing |
 | Tables | A table is missing or `oauth_tokens` has no `family_started_at` (migrate; see [installation](installation.md#migrations)), or on MySQL and MariaDB a column is not `utf8mb4_bin` |
 | Users | The users table has no configured finder. A custom provider is reported as `custom user provider` |
 | Users integration | Only with `CakeDC/Users`: `OAuthServer.users` is invalid (fail); otherwise prints what the integration's Token authenticator validates and where |
-| Login URL | Prints the resolved login URL; fails when it cannot be built |
-| CSRF | The `CsrfProtectionMiddleware` of your application does not skip the token endpoint (fail). Warns when it cannot inspect the middleware |
+| Login URL | Prints the resolved login URL; fails when it cannot be built. Warns when a local string URL matches no route or controller (another site's URL is not checked) |
+| CSRF | The `CsrfProtectionMiddleware` of your application does not skip the token endpoint (fail). Warns when there is no `CsrfProtectionMiddleware` in the queue (the consent and connections pages rely on it) or when it cannot inspect the middleware |
+| Authenticators | Builds your authentication service with a probe request. Warns when the Session authenticator comes before the Token authenticator, or when there is no Token authenticator (ignore that one when your resources live in another application). Fails when the service cannot be built, for example a Token authenticator for a resource at the host root without `paths`. With cakedc/users it reads `Auth.Authenticators` |
 | RBAC | Only with `CakeDC/Users`: RBAC denies the OAuth endpoints (fail). See [cakedc-users](cakedc-users.md#what-oauth-check-says) |
 | Rate limiting | `rateLimit.cache` is `null` (warn: the token endpoints are not throttled), or the named cache configuration does not exist (fail) |
 | Client metadata documents | Metadata documents are enabled but `ext-curl` is missing (fail), or `rateLimit.cache` is `null` so there is no fetch budget and no negative cache (warn) |
