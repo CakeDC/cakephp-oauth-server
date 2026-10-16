@@ -106,6 +106,21 @@ class CustomKeyUsersTest extends TestCase
         $this->assertNull($context->currentOwner((new ServerRequest())->withAttribute('identity', ['id' => 8])));
     }
 
+    public function testAnIdentityThatCannotTellItsIdentifierFallsBackToTheKeyColumn(): void
+    {
+        $provider = $this->provider();
+        $context = new SessionUserContext($provider, '/login', 'redirect', 'identity', $provider->keyField(...));
+
+        // A default field map (`id`) on a table keyed `member_id`: getIdentifier() is null.
+        $identity = new Identity(['member_id' => 8, 'full_name' => 'Grace']);
+        $this->assertNull($identity->getIdentifier());
+
+        $owner = $context->currentOwner((new ServerRequest())->withAttribute('identity', $identity));
+        $this->assertSame('8', $owner?->subject);
+        $none = new Identity(['full_name' => 'nobody']);
+        $this->assertNull($context->currentOwner((new ServerRequest())->withAttribute('identity', $none)));
+    }
+
     public function testTestTokensForKeyedPeople(): void
     {
         foreach ([7, '7', $this->fetchTable('Members')->get(7), ['member_id' => 7], new Identity(['member_id' => 7], ['fieldMap' => ['id' => 'member_id']])] as $who) {

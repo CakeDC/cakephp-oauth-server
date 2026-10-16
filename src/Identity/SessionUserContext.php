@@ -57,7 +57,7 @@ final class SessionUserContext implements UserContextInterface
             : $this->identityAttribute;
         $identity = $request->getAttribute($attribute);
         $subject = match (true) {
-            $identity instanceof IdentityInterface => $identity->getIdentifier(),
+            $identity instanceof IdentityInterface => $this->identifierOf($identity),
             $identity instanceof ArrayAccess, is_array($identity) => $identity[$this->keyColumn()] ?? null,
             default => null,
         };
@@ -67,6 +67,24 @@ final class SessionUserContext implements UserContextInterface
         $owner = $this->users->findBySubject((string)$subject);
 
         return $owner !== null && $owner->type === SubjectType::User ? $owner : null;
+    }
+
+    /**
+     * The identifier of an identity; when it cannot tell (a default field map on a table keyed by another
+     * column), the key column of its original data, so nobody loops between the login and the consent page.
+     *
+     * @param \Authentication\IdentityInterface $identity The identity.
+     * @return mixed
+     */
+    private function identifierOf(IdentityInterface $identity): mixed
+    {
+        $subject = $identity->getIdentifier();
+        if (is_int($subject) || is_string($subject) && $subject !== '') {
+            return $subject;
+        }
+        $data = $identity->getOriginalData();
+
+        return $data[$this->keyColumn()] ?? null;
     }
 
     /**

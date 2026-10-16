@@ -327,6 +327,13 @@ class CommandsTest extends TestCase
         $this->assertStringContainsString('[WARN] Authenticators: no Token authenticator', $output);
     }
 
+    public function testCheckProbesTheAuthenticatorsAtABearerPath(): void
+    {
+        $output = $this->checkApplication('CakeDC\\OAuthServer\\Test\\Support\\CheckApp\\ApiOnly');
+
+        $this->assertStringContainsString('[PASS] Authenticators: Token comes before Session', $output);
+    }
+
     public function testCheckPassesTheAuthenticatorOrderOfTheTestApplication(): void
     {
         $this->exec('oauth check');

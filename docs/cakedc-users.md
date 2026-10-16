@@ -43,7 +43,7 @@ Notes:
   (`/api` for `https://example.com/api`): on cakedc/users pages such as `/profile` or `/logout` a request
   carrying this server's token is refused with 401 and never reaches the controller. Inside the path,
   checking scopes is your job: `OAuthServer::token($request)->hasScope('content:read')`. A resource at the
-  host root needs `OAuthServer.users.paths` (or `OAuthServer.tokenPaths`) set explicitly. See
+  host root (the default resource included) needs `OAuthServer.users.paths` (or `OAuthServer.tokenPaths`) set explicitly. See
   [protecting-apis](protecting-apis.md).
 
 ```php

@@ -5,6 +5,7 @@ namespace CakeDC\OAuthServer\Test\UsersIntegration;
 
 use Cake\Console\TestSuite\ConsoleIntegrationTestTrait;
 use Cake\Core\Configure;
+use Cake\Core\Plugin;
 use Cake\Http\ServerRequest;
 use Cake\TestSuite\IntegrationTestTrait;
 use Cake\TestSuite\TestCase;
@@ -383,6 +384,19 @@ class UsersIntegrationTest extends TestCase
         }
     }
 
+    /**
+     * An application instance, without letting its constructor replace the plugin collection of the run.
+     */
+    private function application(): Application
+    {
+        $plugins = Plugin::getCollection();
+        try {
+            return new Application(CONFIG);
+        } finally {
+            Plugin::setCollection($plugins);
+        }
+    }
+
     private function pluginRunningOn(bool $cli): OAuthServerPlugin
     {
         return new class ($cli) extends OAuthServerPlugin {
@@ -402,7 +416,7 @@ class UsersIntegrationTest extends TestCase
     {
         $authenticators = Configure::read('Auth.Authenticators');
         $original = Configure::read('OAuthServer');
-        $app = new Application(CONFIG);
+        $app = $this->application();
         try {
             foreach (['resource' => 5, 'paths' => 'api', 'typo' => true] as $key => $value) {
                 Configure::delete('Auth.Authenticators.OAuthServerToken');
@@ -452,5 +466,46 @@ class UsersIntegrationTest extends TestCase
         }
 
         $this->assertOutputContains('[WARN] Authenticators: the Session authenticator comes before the Token');
+    }
+
+    public function testARootResourceWithoutExplicitPathsIsRefusedEarlyAndReported(): void
+    {
+        $authenticators = Configure::read('Auth.Authenticators');
+        $original = Configure::read('OAuthServer');
+        $app = $this->application();
+        try {
+            Configure::write('OAuthServer.resources', ['http://localhost' => [
+                'name' => 'Whole site',
+                'scopes' => ['all' => 'Everything'],
+                'defaultScopes' => ['all'],
+            ]]);
+            Configure::write('OAuthServer.users', ['resource' => 'http://localhost']);
+            Configure::delete('Auth.Authenticators.OAuthServerToken');
+            OAuthServer::reset();
+
+            // The web fails at boot with a message that names the settings; the CLI skips the step.
+            try {
+                $this->pluginRunningOn(false)->bootstrap($app);
+                $this->fail('A root resource without paths must be refused at boot.');
+            } catch (InvalidArgumentException $e) {
+                $this->assertStringContainsString('OAuthServer.users.paths', $e->getMessage());
+                $this->assertStringContainsString('OAuthServer.tokenPaths', $e->getMessage());
+            }
+            $this->assertNull(Configure::read('Auth.Authenticators.OAuthServerToken'));
+            $this->pluginRunningOn(true)->bootstrap($app);
+
+            $this->exec('oauth check');
+            $this->assertOutputContains('[FAIL] Users integration');
+            $this->assertOutputContains('OAuthServer.users.paths');
+
+            // An explicit choice is accepted.
+            Configure::write('OAuthServer.users.paths', ['/']);
+            $this->pluginRunningOn(false)->bootstrap($app);
+            $this->assertSame(['/'], Configure::read('Auth.Authenticators.OAuthServerToken.paths'));
+        } finally {
+            Configure::write('OAuthServer', $original);
+            Configure::write('Auth.Authenticators', $authenticators);
+            OAuthServer::reset();
+        }
     }
 }

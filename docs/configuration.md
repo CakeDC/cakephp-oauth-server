@@ -135,7 +135,7 @@ Used only with `CakeDC/Users`.
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `users.resource` | string | the server's default resource | The resource the integration's token authenticator validates against |
-| `users.paths` | list of strings | `tokenPaths`, else the path of the resource | The path prefixes where the integration's token authenticator authenticates |
+| `users.paths` | list of strings | `tokenPaths`, else the path of the resource | The path prefixes where the integration's token authenticator authenticates. Set `tokenPaths` to the same list so `OAuthServer::csrfSkip()` skips CSRF in the same places |
 
 The authenticator accepts a token only below those paths, and scope checks inside them are your job. See
 [cakedc-users](cakedc-users.md).

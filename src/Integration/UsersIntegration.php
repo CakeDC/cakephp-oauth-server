@@ -8,6 +8,7 @@ use Cake\Http\ServerRequest;
 use CakeDC\Auth\Rbac\Rbac;
 use CakeDC\Auth\Rbac\RbacInterface;
 use CakeDC\OAuthServer\Config\PluginConfig;
+use InvalidArgumentException;
 
 /**
  * Wires the plugin into cakedc/users: authenticator and RBAC rules.
@@ -39,8 +40,14 @@ final class UsersIntegration
             if ($resource !== null) {
                 $settings['resource'] = $resource;
             }
-            $paths = $config->usersPaths();
-            if ($paths !== null) {
+            $paths = $config->effectiveUsersPaths();
+            if (is_string($paths)) {
+                // Without this the authenticator would throw on every web request, the login page included.
+                throw new InvalidArgumentException(
+                    'The cakedc/users integration cannot register the Token authenticator: ' . $paths . '.',
+                );
+            }
+            if ($config->usersPaths() !== null) {
                 $settings['paths'] = $paths;
             }
             // First in line: the first authenticator that succeeds wins, so a session cookie sent along with a

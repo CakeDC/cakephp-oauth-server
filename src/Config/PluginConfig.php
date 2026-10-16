@@ -332,6 +332,43 @@ final class PluginConfig
     }
 
     /**
+     * The identifier of the server's default resource, validated without touching the secret.
+     *
+     * @return string
+     * @throws \InvalidArgumentException For an invalid resource setting.
+     */
+    public function defaultResourceIdentifier(): string
+    {
+        return $this->buildServerConfig(str_repeat('x', 32))->resources->defaultResource()->identifier;
+    }
+
+    /**
+     * The path prefixes the cakedc/users integration's Token authenticator will authenticate in, or the reason
+     * there is none.
+     *
+     * @return list<string>|string The prefixes, or an error message naming the settings to fix.
+     * @throws \InvalidArgumentException For an invalid `users` or `tokenPaths` setting.
+     */
+    public function effectiveUsersPaths(): array|string
+    {
+        $paths = $this->usersPaths();
+        if ($paths !== null) {
+            return $paths;
+        }
+        $resource = $this->usersResource() ?? $this->defaultResourceIdentifier();
+        $path = RequestPaths::ofResource($resource);
+        if ($path === '/') {
+            return sprintf(
+                'the resource "%s" is at the host root, so its token would be accepted on every route; set '
+                . 'OAuthServer.users.paths or OAuthServer.tokenPaths (["/"] to accept it everywhere)',
+                $resource,
+            );
+        }
+
+        return [$path];
+    }
+
+    /**
      * A list of path prefixes setting, normalized.
      *
      * @param mixed $value The raw setting.

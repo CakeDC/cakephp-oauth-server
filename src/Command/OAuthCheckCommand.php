@@ -118,6 +118,10 @@ class OAuthCheckCommand extends Command
                 if (!Plugin::isLoaded('CakeDC/Users')) {
                     return ['pass', 'cakedc/users is not loaded'];
                 }
+                $paths = $config->effectiveUsersPaths();
+                if (is_string($paths)) {
+                    return ['fail', $paths];
+                }
                 $paths = $config->usersPaths();
                 $resource = $config->usersResource();
 
@@ -449,14 +453,24 @@ class OAuthCheckCommand extends Command
     {
         $app = $this->application();
         if (!is_string($app) && $app instanceof AuthenticationServiceProviderInterface) {
-            $service = $app->getAuthenticationService(new ServerRequest(['url' => '/']));
-            $classes = [];
-            if ($service instanceof AuthenticationService) {
+            // Probe at the bearer paths: an app may load the Token authenticator for its API paths only.
+            $first = null;
+            foreach (PluginConfig::fromConfigure()->bearerPaths() ?: ['/'] as $probe) {
+                $service = $app->getAuthenticationService(new ServerRequest(['url' => $probe]));
+                if (!$service instanceof AuthenticationService) {
+                    break;
+                }
+                $classes = [];
                 foreach ($service->authenticators() as $authenticator) {
                     $classes[] = $authenticator::class;
                 }
-
-                return $classes;
+                $first ??= $classes;
+                if (array_filter($classes, fn(string $class): bool => is_a($class, TokenAuthenticator::class, true))) {
+                    return $classes;
+                }
+            }
+            if ($first !== null) {
+                return $first;
             }
 
             return 'the authentication service is not an AuthenticationService; its authenticators were not inspected';
