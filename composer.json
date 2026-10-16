@@ -9,7 +9,7 @@
     ],
     "require": {
         "php": ">=8.2",
-        "cakedc/oauth-server": "1.x-dev",
+        "cakedc/oauth-server": "^1.0",
         "cakephp/authentication": "^3.3.6",
         "cakephp/cakephp": "^5.1.10",
         "cakephp/migrations": "^4.0 || ^5.0"

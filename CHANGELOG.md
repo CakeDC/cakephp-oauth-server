@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.0.0-beta1 (unreleased)
+## 1.0.0-beta1 (2026-10-16)
 
 First release. An OAuth 2.1 authorization server for CakePHP 5 on top of cakedc/oauth-server.
 

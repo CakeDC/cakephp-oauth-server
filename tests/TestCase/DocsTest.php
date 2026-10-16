@@ -185,7 +185,7 @@ class DocsTest extends TestCase
 
     public function testChangelogHasTheFirstRelease(): void
     {
-        $this->assertStringContainsString('1.0.0-beta1 (unreleased)', $this->changelog());
+        $this->assertMatchesRegularExpression('/^## 1\.0\.0-beta1 \((unreleased|\d{4}-\d{2}-\d{2})\)$/m', $this->changelog());
     }
 
     private function changelog(): string
