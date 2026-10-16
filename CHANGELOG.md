@@ -45,6 +45,11 @@ First release. An OAuth 2.1 authorization server for CakePHP 5 on top of cakedc/
   plugin.
 - `OAuthServer::rbacPermissions()` lists the controller's actions instead of `*`, so a future action does not
   inherit the bypass.
+- `oauth check` builds the server the way the endpoints do on its `Configuration` line, so every setting that
+  makes them answer 503 fails the check (an unknown `users` or `consent` key, a non-string `users.resource`, a
+  wrongly typed `services` entry used to pass with exit code 0).
+- The 503 of the machine endpoints carries `Retry-After: 300` and their usual CORS headers, and a CORS preflight
+  gets the usual 204, so browser clients see the 503.
 - `oauth check` also warns about a missing CSRF middleware and a Session authenticator before the Token one,
   checks that a string login URL routes, and no longer accuses subdirectory installs of an `App.base` mismatch
   when the base is detected at runtime. It fails when the CSRF callback also skips session routes (it probes the
@@ -70,8 +75,9 @@ First release. An OAuth 2.1 authorization server for CakePHP 5 on top of cakedc/
 - Public API boundary: `PluginConfig`, `ServerFactory`, the template renderers, `UsersIntegration`,
   `PluginMessagesLoader`, `UtcDateTimeType`, `RbacPermissionsProvider`, the event dispatcher and the logger are
   `@internal`, as are `OAuthServer::pageCsp()` and `OAuthServer::forRequest()`.
-- Token paths fail closed on `%2F`, empty segments and dot segments; the cakedc/users integration refuses a root
-  resource without explicit paths at boot (web) and `oauth check` fails on it.
+- Token paths fail closed on `%2F`, empty segments and dot segments. With cakedc/users, a root resource without
+  explicit paths makes the integration's Token authenticator refuse every token of this server (it is never
+  accepted on every route by accident) and `oauth check` fails on it; the application keeps working.
 - Routes for the metadata document and the authorize, token, register, revoke, introspect and connections
   endpoints, handled by `OAuthController`.
 - ORM storage (`OrmStorage`) and one migration for `oauth_clients`, `oauth_authorization_codes`,
@@ -96,3 +102,26 @@ First release. An OAuth 2.1 authorization server for CakePHP 5 on top of cakedc/
 - `OAuthTestTrait` for integration tests.
 - English and Spanish translations (`oauth_server` domain).
 - Documentation in `docs/`.
+
+### Known issues for 1.0.0
+
+Found by the pre-release review and left for 1.0.0, not fixed in this beta:
+
+- The `header` option of the Token authenticator is not honoured by `OAuthServer::csrfSkip()`, which always reads
+  `Authorization` (RFC 6750 defines no other header); the option will be removed or `csrfSkip()` will follow it.
+- Three overlapping path settings: the Token authenticator's `paths` defaults to the path of its resource and
+  ignores `OAuthServer.tokenPaths`, and `csrfSkip()` ignores `OAuthServer.users.paths`. A mismatch fails closed
+  (401 or 403); until they are unified, set the same list in every place.
+- A bearer token of this server sent to the plugin's own `token`, `revoke` or `introspect` endpoint is challenged
+  by the Token authenticator (401, outside the token paths) before the core answers as RFC 6749, 7009 and 7662
+  say, which confuses clients whose HTTP layer adds `Authorization` to every request.
+- Bootstrapping the plugin instantiates every configured log engine (to see whether one receives the `oauth`
+  scope), where CakePHP builds them lazily; an engine that depends on something configured later fails at boot.
+- A refresh token (`<prefix>_rt_`) presented as a bearer token is passed on silently to the next authenticator
+  instead of being refused with 401. It is never accepted and never skips CSRF.
+- Public API to settle before 1.0.0: `OAuthServer::pageCsp()` and `OAuthServer::forRequest()` are public methods
+  marked `@internal` on the facade (to move to an internal class); `OAuthController` is declared neither public nor
+  internal; the plugin's routes have no names (`_name`) to link to; `OAuthServer.services` (clock, transport,
+  dns) is a test seam inside the public configuration and is not supported; a Token authenticator protects one
+  resource and an authentication collection cannot hold two with the same alias, so the cakedc/users integration
+  protects a single resource.

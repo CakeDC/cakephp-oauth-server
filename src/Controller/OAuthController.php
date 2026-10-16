@@ -6,8 +6,11 @@ namespace CakeDC\OAuthServer\Controller;
 use Cake\Controller\Controller;
 use Cake\Http\Exception\ServiceUnavailableException;
 use Cake\Http\Response;
+use Cake\Http\ResponseFactory;
+use Cake\Http\StreamFactory;
 use Cake\Routing\Router;
 use CakeDC\OAuth\Server\AuthorizationServer;
+use CakeDC\OAuth\Server\Http\HttpResponder;
 use CakeDC\OAuthServer\Log\CakeLogger;
 use CakeDC\OAuthServer\OAuthServer;
 use Closure;
@@ -23,6 +26,11 @@ use Throwable;
  */
 class OAuthController extends Controller
 {
+    /**
+     * Seconds a client is asked to wait while the endpoints are unavailable.
+     */
+    private const RETRY_AFTER = 300;
+
     /**
      * GET {metadataPath}.
      *
@@ -149,8 +157,10 @@ class OAuthController extends Controller
 
     /**
      * The answer of every endpoint while the `OAuthServer` configuration is invalid: 503, and the reason in the
-     * `oauth` log. The machine endpoints answer JSON; the consent and connections pages raise the exception the
-     * application's error page renders. The rest of the application is not affected.
+     * `oauth` log. The machine endpoints answer the core's JSON with its CORS headers and a `Retry-After`, so a
+     * browser client can read it (a CORS preflight gets the core's normal answer, so the browser sends the request
+     * and sees the 503); the consent and connections pages raise the exception the application's error page
+     * renders. The rest of the application is not affected.
      *
      * @param \Throwable $error Why the server could not be built.
      * @return \Cake\Http\Response
@@ -158,6 +168,11 @@ class OAuthController extends Controller
      */
     private function unavailable(Throwable $error): Response
     {
+        $responder = new HttpResponder(new ResponseFactory(), new StreamFactory());
+        $page = in_array($this->request->getParam('action'), ['authorize', 'connections'], true);
+        if (!$page && $this->request->getMethod() === 'OPTIONS') {
+            return $this->toCakeResponse($responder->preflight());
+        }
         (new CakeLogger())->error(
             'The OAuth endpoint {path} is unavailable: the OAuth server configuration is invalid. {message}',
             [
@@ -166,21 +181,21 @@ class OAuthController extends Controller
                 'exception' => $error,
             ],
         );
-        if (in_array($this->request->getParam('action'), ['authorize', 'connections'], true)) {
+        if ($page) {
             throw new ServiceUnavailableException(
                 __d('oauth_server', 'The authorization service is not available right now. Try again later.'),
             );
         }
 
-        return $this->response
-            ->withStatus(503)
-            ->withType('application/json')
-            ->withHeader('Cache-Control', 'no-store')
-            ->withHeader('Pragma', 'no-cache')
-            ->withStringBody((string)json_encode([
+        return $this->toCakeResponse($responder->withCors($responder->json(
+            [
                 'error' => 'temporarily_unavailable',
                 'error_description' => 'The authorization server is not available right now.',
-            ]));
+            ],
+            503,
+            // A configuration is not fixed in seconds; well-behaved clients wait instead of hammering the log.
+            ['Retry-After' => (string)self::RETRY_AFTER],
+        )));
     }
 
     /**

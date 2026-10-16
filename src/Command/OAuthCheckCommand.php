@@ -37,6 +37,7 @@ use CakeDC\OAuthServer\Authenticator\TokenAuthenticator;
 use CakeDC\OAuthServer\Config\PluginConfig;
 use CakeDC\OAuthServer\Identity\OrmUserProvider;
 use CakeDC\OAuthServer\Integration\UsersIntegration;
+use CakeDC\OAuthServer\Server\ServerFactory;
 use ReflectionClass;
 use ReflectionProperty;
 use Throwable;
@@ -143,7 +144,8 @@ class OAuthCheckCommand extends Command
         return [
             'Secret' => fn(): array => $this->secret(),
             'Configuration' => function () use ($config): array {
-                $server = $config->serverConfig();
+                // Built like the endpoints build it (no request, no I/O): what fails here makes them answer 503.
+                $server = (new ServerFactory($config))->create()->config();
                 new TokenGenerator($server->tokenPrefix);
 
                 return [

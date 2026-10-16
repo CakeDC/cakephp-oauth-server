@@ -165,7 +165,7 @@ when any check fails, so it is suitable for a deployment pipeline.
 | Check | Fails or warns when |
 | --- | --- |
 | Secret | `OAuthServer.secret` is shorter than 32 characters (fail), or is not set and `Security.salt` is missing or short (fail); a derived secret only warns |
-| Configuration | The configuration is invalid (an unknown key, a bad type, an undeclared resource, a `tokenPrefix` that is not 1 to 16 lowercase letters or digits) |
+| Configuration | Builds the server the way the endpoints do (no request, no I/O) and fails when that is refused: an unknown key or a bad type in any section (the plugin's `users`, `consent`, `services` and so on included), an undeclared resource, a `tokenPrefix` that is not 1 to 16 lowercase letters or digits, a missing rate limit cache. Whatever fails here makes the endpoints answer 503 |
 | Issuer | The issuer is invalid (fail). Warns for plain http, for an issuer with a path (the RFC 8414 document must be served at the host root), and when the issuer path differs from a configured `App.base`. When `App.base` is `false` (Cake detects the directory per request) the CLI cannot compare them and says so instead of guessing |
 | Tables | Inspects the connection of the plugin's tables (not necessarily `default`; the message names it). Fails when a table is missing, a column of the current migrations is missing (such as `oauth_tokens.family_started_at`) or a unique key is missing (`client_id_hash`, `code_hash`, `token_hash`, and subject, client and resource of a consent): migrate, see [installation](installation.md#migrations). On MySQL and MariaDB it also fails when a column is not `utf8mb4_bin` |
 | Users | The users table has no configured finder. A custom provider is reported as `custom user provider` |

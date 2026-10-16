@@ -67,7 +67,8 @@ the application keeps working.
 
 The `OAuthServer` configuration is invalid (an unknown key, a wrong type, a resource declared with a string, a
 short `Security.salt` without `OAuthServer.secret`, an invalid `users` or `tokenPaths` value), so the server
-cannot be built. The plugin fails closed on its own routes only: the endpoints answer 503, the consent and
+cannot be built. The plugin fails closed on its own routes only: the endpoints answer 503 (with
+`Retry-After: 300`), the consent and
 connections pages show your error page with 503, and every token of this server gets 401 with
 `The access token cannot be validated.`; your other pages keep working. The `oauth` log has one line per refusal
 with the reason. Run `bin/cake oauth check` and fix what it names

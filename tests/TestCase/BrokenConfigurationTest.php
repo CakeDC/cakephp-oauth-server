@@ -79,6 +79,9 @@ class BrokenConfigurationTest extends TestCase
             'a resource configured as a string' => ['resource'],
             'a tokenPaths that is not a list' => ['tokenPaths'],
             'an unknown users key' => ['users'],
+            'a users.resource that is not a string' => ['usersResource'],
+            'a services.clock that is not a clock' => ['servicesClock'],
+            'an unknown consent key' => ['consent'],
         ];
     }
 
@@ -90,6 +93,9 @@ class BrokenConfigurationTest extends TestCase
             'resource' => Configure::write('OAuthServer.resources', ['http://localhost/api' => 'Test API']),
             'tokenPaths' => Configure::write('OAuthServer.tokenPaths', 'api'),
             'users' => Configure::write('OAuthServer.users', ['typo' => true]),
+            'usersResource' => Configure::write('OAuthServer.users', ['resource' => 5]),
+            'servicesClock' => Configure::write('OAuthServer.services', ['clock' => 'not a clock']),
+            'consent' => Configure::write('OAuthServer.consent', ['typo' => true]),
         };
         OAuthServer::reset();
     }
@@ -121,10 +127,46 @@ class BrokenConfigurationTest extends TestCase
         $this->assertResponseCode(503);
         $this->assertContentType('application/json');
         $this->assertHeader('Cache-Control', 'no-store');
+        $this->assertHeader('Retry-After', '300');
+        // The CORS headers of the endpoint, so a browser client can read the 503.
+        $this->assertHeader('Access-Control-Allow-Origin', '*');
+        $this->assertHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, MCP-Protocol-Version');
         $body = (array)json_decode((string)$this->_response->getBody(), true);
         $this->assertSame('temporarily_unavailable', $body['error'] ?? null);
         $this->assertStringNotContainsString('salt', (string)$this->_response->getBody(), 'The reason goes to the log.');
         $this->assertStringContainsString('error: The OAuth endpoint /oauth/token is unavailable', $this->logged());
+    }
+
+    #[DataProvider('brokenConfigurations')]
+    public function testOauthCheckFailsOnEveryConfigurationTheServerRefuses(string $how): void
+    {
+        $this->breakConfiguration($how);
+
+        $this->exec('oauth check');
+
+        $this->assertExitError();
+        $this->assertOutputContains('[FAIL]');
+    }
+
+    public function testACorsPreflightIsAnsweredSoTheBrowserSeesThe503(): void
+    {
+        $this->breakConfiguration('resource');
+
+        $this->options('/oauth/token');
+        $this->assertResponseCode(204);
+        $this->assertHeader('Access-Control-Allow-Origin', '*');
+        $this->assertHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+
+        $this->configRequest(['headers' => ['Content-Type' => 'application/x-www-form-urlencoded']]);
+        $this->post('/oauth/token', ['grant_type' => 'client_credentials']);
+        $this->assertResponseCode(503);
+        $this->assertHeader('Access-Control-Allow-Origin', '*');
+
+        // The pages are not called from other origins: no CORS there.
+        $this->session(['Auth' => ['id' => 1]]);
+        $this->get('/oauth/connections');
+        $this->assertResponseCode(503);
+        $this->assertFalse($this->_response->hasHeader('Access-Control-Allow-Origin'));
     }
 
     #[DataProvider('brokenConfigurations')]
@@ -168,6 +210,13 @@ class BrokenConfigurationTest extends TestCase
         $this->assertResponseCode(401);
         $this->assertHeaderContains('WWW-Authenticate', 'error="invalid_token"');
         $this->assertStringContainsString('error: The Token authenticator refused a bearer token', $this->logged());
+        $this->assertStringContainsString(
+            // Resolving the resource reads the resources and the issuer; the rest only breaks the server.
+            in_array($how, ['resource', 'issuer'], true)
+                ? 'its resource and paths cannot be resolved'
+                : 'the OAuth server cannot be built',
+            $this->logged(),
+        );
         $this->assertStringNotContainsString(str_repeat('x', 43), $this->logged());
 
         // The application still answers its own pages, also for a foreign bearer token.

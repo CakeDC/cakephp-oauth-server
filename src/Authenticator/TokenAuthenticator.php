@@ -144,7 +144,11 @@ class TokenAuthenticator extends AbstractAuthenticator implements StatelessInter
         try {
             ['resource' => $resource, 'paths' => $paths] = $this->resolve();
         } catch (Throwable $e) {
-            return $this->unusable($request, $e);
+            return $this->unusable(
+                $request,
+                'its resource and paths cannot be resolved from its options and the OAuthServer configuration',
+                $e,
+            );
         }
         if (!RequestPaths::routedWithin($request, $paths)) {
             $this->failure = 'The access token is not valid at this address.';
@@ -154,7 +158,7 @@ class TokenAuthenticator extends AbstractAuthenticator implements StatelessInter
         try {
             $validator = OAuthServer::server()->tokenValidator();
         } catch (Throwable $e) {
-            return $this->unusable($request, $e);
+            return $this->unusable($request, 'the OAuth server cannot be built from the OAuthServer configuration', $e);
         }
         $result = $validator->validate($token, $resource);
         if ($result instanceof ValidationFailure) {
@@ -167,18 +171,24 @@ class TokenAuthenticator extends AbstractAuthenticator implements StatelessInter
     }
 
     /**
-     * Refuses a token of this server that cannot be checked because of the configuration, and logs why.
+     * Refuses a token of this server that cannot be checked because of the authenticator's options or the
+     * configuration, and logs why.
      *
      * @param \Psr\Http\Message\ServerRequestInterface $request The request.
+     * @param string $cause What could not be done.
      * @param \Throwable $error What failed.
      * @return \Authentication\Authenticator\ResultInterface
      */
-    private function unusable(ServerRequestInterface $request, Throwable $error): ResultInterface
+    private function unusable(ServerRequestInterface $request, string $cause, Throwable $error): ResultInterface
     {
         (new CakeLogger())->error(
-            'The Token authenticator refused a bearer token at {path}: the OAuth server configuration is invalid. '
-            . '{message}',
-            ['path' => $request->getUri()->getPath(), 'message' => $error->getMessage(), 'exception' => $error],
+            'The Token authenticator refused a bearer token at {path}: {cause}. {message}',
+            [
+                'path' => $request->getUri()->getPath(),
+                'cause' => $cause,
+                'message' => $error->getMessage(),
+                'exception' => $error,
+            ],
         );
         $this->failure = 'The access token cannot be validated.';
 

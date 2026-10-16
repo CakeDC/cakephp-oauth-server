@@ -143,10 +143,22 @@ class TokenAuthenticatorTest extends TestCase
         $request = Routed::request('/nope/x', '/nope/**');
 
         $this->assertSame(Result::FAILURE_CREDENTIALS_MISSING, $authenticator->authenticate($request)->getStatus());
-        $result = $authenticator->authenticate(
-            $request->withHeader('Authorization', 'Bearer ' . $this->personalToken()),
-        );
+        Log::setConfig('oauth_capture', ['className' => ArrayLog::class, 'scopes' => ['oauth']]);
+        try {
+            $result = $authenticator->authenticate(
+                $request->withHeader('Authorization', 'Bearer ' . $this->personalToken()),
+            );
+            $engine = Log::engine('oauth_capture');
+            $this->assertInstanceOf(ArrayLog::class, $engine);
+            $logged = implode("\n", $engine->read());
+        } finally {
+            Log::drop('oauth_capture');
+        }
         $this->assertSame(Result::FAILURE_CREDENTIALS_INVALID, $result->getStatus());
+        // The authenticator's own option is to blame, not the server configuration.
+        $this->assertStringContainsString('its resource and paths cannot be resolved', $logged);
+        $this->assertStringContainsString('not declared in OAuthServer.resources', $logged);
+        $this->assertStringNotContainsString('OAuth server cannot be built', $logged);
         try {
             $authenticator->resolve();
             $this->fail('An undeclared resource must be reported.');

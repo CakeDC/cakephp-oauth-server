@@ -193,17 +193,18 @@ application down:
 | Where | What happens |
 | --- | --- |
 | Pages of the application, the login included | Work as usual |
-| The metadata document, `token`, `register`, `revoke`, `introspect` | `503` with `{"error": "temporarily_unavailable"}` and `Cache-Control: no-store` |
+| The metadata document, `token`, `register`, `revoke`, `introspect` | `503` with `{"error": "temporarily_unavailable"}`, `Cache-Control: no-store`, `Retry-After: 300` and the endpoints' usual CORS headers, so browser clients can read it (a CORS preflight gets the usual `204`) |
 | The consent and connections pages | `503`, rendered by your application's error page |
 | A request with a bearer token of this server (`<tokenPrefix>_at_`, `<tokenPrefix>_pat_`) | `401` from the Token authenticator, never passed on to the session |
 | `OAuthServer::csrfSkip()` | Still skips the client endpoints; never skips a bearer request |
 | `bin/cake`, migrations | Work as usual; `bin/cake oauth check` reports the setting to fix |
 
 Each refusal writes the reason to the `oauth` log scope (the setting to fix, never a token or the secret):
-look there first when OAuth answers 503 or every token gets 401. The Token authenticator and `csrfSkip()` read
-only the `tokenPrefix` setting until a request carries such a token, so a broken configuration costs other
-requests nothing. When `tokenPrefix` itself is not a string, every bearer token is treated as this server's and
-refused.
+look there first when OAuth answers 503 or every token gets 401. A broken configuration costs other requests
+next to nothing: the Token authenticator reads only the `tokenPrefix` setting until a request carries such a
+token, and `csrfSkip()` reads the route prefix (where the plugin connected its endpoints) on every
+state-changing request plus `tokenPrefix` for a bearer request; neither builds the server for them. When
+`tokenPrefix` itself is not a string, every bearer token is treated as this server's and refused.
 
 ## A complete example
 
